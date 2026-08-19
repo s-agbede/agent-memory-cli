@@ -6,11 +6,12 @@ from uuid import uuid4
 
 import httpx
 import typer
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from pydantic import ValidationError
 from redis_agent_memory import AgentMemory, errors
 from rich.console import Console
 from rich.prompt import Prompt
+from rich.text import Text
 
 from trip_agent.agent import (
     AgentReply,
@@ -72,7 +73,11 @@ def show_memories(memories: Sequence[MemoryView], console: Console) -> None:
 
     console.print("[bold magenta]Long-term memories[/bold magenta]")
     for memory in memories:
-        console.print(f"  [dim]{memory.memory_type}[/dim]  {memory.text}")
+        line = Text("  ")
+        line.append(memory.memory_type, style="dim")
+        line.append("  ")
+        line.append(memory.text)
+        console.print(line)
 
 
 def show_reply(reply: AgentReply, console: Console) -> None:
@@ -133,7 +138,9 @@ def run_repl(
     """Run the interactive chat loop."""
 
     console.print("[bold green]Hi! I'm your friendly trip-planning companion.[/bold green]")
-    console.print(f"Traveler: [cyan]{state.user_id}[/cyan]")
+    traveler = Text("Traveler: ")
+    traveler.append(state.user_id, style="cyan")
+    console.print(traveler)
     console.print("Type [cyan]/help[/cyan] to see the available commands.")
 
     while True:
@@ -207,4 +214,7 @@ def main() -> None:
             "[red]Couldn't connect to Redis Agent Memory. Check the endpoint, store ID, "
             "and API key.[/red]"
         )
+        raise typer.Exit(code=1) from None
+    except OpenAIError:
+        console.print("[red]Couldn't initialize OpenAI. Check OPENAI_API_KEY and try again.[/red]")
         raise typer.Exit(code=1) from None

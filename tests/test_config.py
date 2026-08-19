@@ -30,3 +30,25 @@ def test_settings_require_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "OPENAI_API_KEY",
+        "OPENAI_MODEL",
+        "REDIS_AGENT_MEMORY_STORE_ID",
+        "REDIS_AGENT_MEMORY_API_KEY",
+        "TRIP_AGENT_USER_ID",
+    ],
+)
+def test_settings_reject_blank_values(
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for variable, value in REQUIRED.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.setenv(name, "   ")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
