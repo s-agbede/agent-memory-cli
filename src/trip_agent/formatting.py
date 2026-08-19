@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal, cast
 
-from openai.types.responses.easy_input_message_param import EasyInputMessageParam
+from openai.types.responses.response_input_param import ResponseInputParam
 from rich.text import Text
 
 
@@ -79,10 +79,10 @@ def _reference_context(session: object, memories: object) -> str:
     )
 
 
-def build_model_input(session: object, memories: object) -> list[EasyInputMessageParam]:
+def build_model_input(session: object, memories: object) -> ResponseInputParam:
     """Build Responses API messages from Redis session and long-term memory."""
 
-    messages: list[EasyInputMessageParam] = [
+    messages: ResponseInputParam = [
         {
             "type": "message",
             "role": "developer",
