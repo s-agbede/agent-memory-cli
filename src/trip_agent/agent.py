@@ -20,6 +20,14 @@ class AgentReply:
     citations: tuple[Citation, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryView:
+    """A display-ready long-term memory."""
+
+    memory_type: str
+    text: str
+
+
 class TripAgentError(RuntimeError):
     """A conversational turn failed before an answer was generated."""
 
@@ -91,6 +99,21 @@ class TripAgent:
         except TripAgentError as error:
             raise AssistantMemoryWarning(reply) from error
         return reply
+
+    def search_memories(self, query: str, limit: int = 10) -> tuple[MemoryView, ...]:
+        """Search this traveler's long-term memories for display."""
+
+        try:
+            result = self.memory.search_long_term_memory(
+                request=self._memory_request(query, limit=limit)
+            )
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't search your Redis Agent Memory data.") from error
+
+        return tuple(
+            MemoryView(memory_type=item.memory_type or "memory", text=item.text)
+            for item in result.items
+        )
 
     def _memory_request(self, text: str, limit: int) -> MemoryRequest:
         request = {

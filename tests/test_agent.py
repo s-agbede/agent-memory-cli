@@ -164,3 +164,19 @@ def test_openai_failure_does_not_store_assistant_event() -> None:
         "get_session_memory",
         "search_long_term_memory",
     ]
+
+
+def test_search_memories_is_owner_scoped_and_normalized() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    rows = agent.search_memories("food preferences")
+
+    request = cast(dict[str, object], memory.calls[0].kwargs["request"])
+    assert request == {
+        "text": "food preferences",
+        "filter_": {"owner_id": {"eq": "sam"}},
+        "limit": 10,
+    }
+    assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
