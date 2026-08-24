@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import cast
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 from openai import OpenAI, OpenAIError
@@ -45,10 +45,23 @@ class ProfileFact:
 
 @dataclass(frozen=True, slots=True)
 class ProfileSaveResult:
-    """Outcome of a bulk direct-memory onboarding write."""
+    """Profile categories created, updated, or not saved."""
 
-    created_count: int
-    failed_count: int
+    created_categories: tuple[str, ...]
+    updated_categories: tuple[str, ...]
+    failed_categories: tuple[str, ...]
+
+    @property
+    def created_count(self) -> int:
+        """Return the number of newly created categories for the current CLI."""
+
+        return len(self.created_categories)
+
+    @property
+    def failed_count(self) -> int:
+        """Return the number of failed categories for the current CLI."""
+
+        return len(self.failed_categories)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +100,7 @@ class AssistantMemoryWarning(RuntimeError):
 
 MemoryRequest = models.SearchLongTermMemoryRequestContentTypedDict
 MEMORY_SIMILARITY_THRESHOLD = 0.7
+PROFILE_CATEGORIES = frozenset({"preferences", "dietary", "budget", "origin"})
 
 
 class TripAgent:
@@ -245,29 +259,83 @@ class TripAgent:
         return rewritten
 
     def save_profile(self, facts: Sequence[ProfileFact]) -> ProfileSaveResult:
-        """Save explicit onboarding preferences directly to long-term memory."""
+        """Create missing profile categories and update existing categories in place."""
 
         if not facts:
-            return ProfileSaveResult(created_count=0, failed_count=0)
+            return ProfileSaveResult(
+                created_categories=(), updated_categories=(), failed_categories=()
+            )
+
+        request = cast(
+            MemoryRequest,
+            {
+                "filter_": {
+                    "owner_id": {"eq": self.user_id},
+                    "namespace": {"eq": "profile"},
+                }
+            },
+        )
+        try:
+            profile = self.memory.search_long_term_memory(request=request)
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't load your long-term travel profile.") from error
+
+        existing_by_category = _latest_profile_record_ids(profile.items)
+        updated_categories: list[str] = []
+        failed_categories: list[str] = []
+        missing_facts: list[ProfileFact] = []
+        for fact in facts:
+            existing_id = existing_by_category.get(fact.category)
+            if existing_id is None:
+                missing_facts.append(fact)
+                continue
+            try:
+                self.memory.update_long_term_memory(
+                    memory_id=existing_id,
+                    text=fact.text,
+                    memory_type="semantic",
+                    topics=["direct", fact.category],
+                    namespace="profile",
+                    owner_id=self.user_id,
+                )
+            except (errors.AgentMemoryError, httpx.RequestError):
+                failed_categories.append(fact.category)
+            else:
+                updated_categories.append(fact.category)
 
         records: list[CreateMemoryRecordTypedDict] = [
             {
-                "id": str(uuid4()),
+                "id": str(uuid5(NAMESPACE_URL, f"profile:{self.user_id}:{fact.category}")),
                 "text": fact.text,
                 "owner_id": self.user_id,
                 "memory_type": "semantic",
                 "namespace": "profile",
                 "topics": ["direct", fact.category],
             }
-            for fact in facts
+            for fact in missing_facts
         ]
-        try:
-            result = self.memory.bulk_create_long_term_memories(memories=records)
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
-            raise TripAgentError("I couldn't save your long-term travel profile.") from error
+        created_categories: list[str] = []
+        if records:
+            try:
+                result = self.memory.bulk_create_long_term_memories(memories=records)
+            except (errors.AgentMemoryError, httpx.RequestError) as error:
+                raise TripAgentError("I couldn't save your long-term travel profile.") from error
+
+            created_ids = set(result.created)
+            error_ids = {error.id for error in result.errors or ()}
+            for fact, record in zip(missing_facts, records, strict=True):
+                if record["id"] in created_ids and record["id"] not in error_ids:
+                    created_categories.append(fact.category)
+                else:
+                    failed_categories.append(fact.category)
+
+        created = set(created_categories)
+        updated = set(updated_categories)
+        failed = set(failed_categories)
         return ProfileSaveResult(
-            created_count=len(result.created),
-            failed_count=len(result.errors or ()),
+            created_categories=tuple(fact.category for fact in facts if fact.category in created),
+            updated_categories=tuple(fact.category for fact in facts if fact.category in updated),
+            failed_categories=tuple(fact.category for fact in facts if fact.category in failed),
         )
 
     def _memory_request(self, text: str, limit: int) -> MemoryRequest:
@@ -395,6 +463,50 @@ def _profile_text(value: object) -> str:
     if not isinstance(value, str) or not (text := value.strip()):
         raise ValueError("A profile fact must be non-empty text.")
     return text
+
+
+def _profile_category(item: object) -> str | None:
+    """Return the first supported profile category tagged on a memory record."""
+
+    topics = getattr(item, "topics", None)
+    if not isinstance(topics, Sequence) or isinstance(topics, (str, bytes)):
+        return None
+    return next(
+        (topic for topic in topics if isinstance(topic, str) and topic in PROFILE_CATEGORIES),
+        None,
+    )
+
+
+def _latest_profile_record_ids(items: Sequence[object]) -> dict[str, str]:
+    """Select the most recently updated record ID for each supported category."""
+
+    selected: dict[str, tuple[datetime, str]] = {}
+    for item in items:
+        category = _profile_category(item)
+        memory_id = getattr(item, "id", None)
+        if category is None or not isinstance(memory_id, str):
+            continue
+        updated_at = _profile_updated_at(item)
+        current = selected.get(category)
+        if current is None or updated_at > current[0]:
+            selected[category] = (updated_at, memory_id)
+    return {category: memory_id for category, (_, memory_id) in selected.items()}
+
+
+def _profile_updated_at(item: object) -> datetime:
+    """Normalize timestamps, falling back safely for missing or malformed legacy data."""
+
+    value = getattr(item, "updated_at", None)
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.min.replace(tzinfo=UTC)
+    if not isinstance(value, datetime):
+        return datetime.min.replace(tzinfo=UTC)
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _memory_views(result: object) -> tuple[MemoryView, ...]:
