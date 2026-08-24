@@ -264,6 +264,30 @@ def _categories_in_submitted_order(
     return tuple(fact.category for fact in facts if fact.category in selected)
 
 
+def offer_profile_onboarding(
+    agent: TripAgent,
+    console: Console,
+    read_input: Callable[[], str],
+) -> None:
+    """Welcome returning travelers or collect a profile for new ones."""
+
+    try:
+        has_profile = agent.has_profile()
+    except TripAgentError as error:
+        console.print(Text(str(error), style="yellow"))
+        console.print(
+            "[yellow]I couldn't check whether a saved travel profile is available. "
+            "Run /onboard when you're ready.[/yellow]"
+        )
+        return
+
+    if has_profile:
+        console.print("[green]Welcome back — your travel profile is available.[/green]")
+        return
+
+    run_onboarding(agent, console, read_input)
+
+
 def handle_command(
     line: str,
     state: SessionState,
@@ -306,6 +330,7 @@ def handle_command(
         traveler.append(user_id, style="cyan")
         console.print(traveler)
         show_session_started(state, console)
+        offer_profile_onboarding(agent, console, read_input or _read_input)
         return True
     if command == "/onboard":
         run_onboarding(agent, console, read_input or _read_input)
@@ -336,11 +361,7 @@ def run_repl(
     console.print("Type [cyan]/help[/cyan] to see the available commands.")
 
     if offer_onboarding:
-        try:
-            if not agent.has_profile():
-                run_onboarding(agent, console, read_input)
-        except TripAgentError as error:
-            console.print(f"[yellow]{error} Run /onboard when you're ready.[/yellow]")
+        offer_profile_onboarding(agent, console, read_input)
 
     while True:
         try:

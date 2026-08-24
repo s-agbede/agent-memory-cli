@@ -50,6 +50,7 @@ class FakeAgent:
         profile_save_result: ProfileSaveResult | None = None,
         rewrite_error: TripAgentError | None = None,
         save_error: TripAgentError | None = None,
+        profile_check_error: TripAgentError | None = None,
     ) -> None:
         self.warning = warning
         self.profile_exists = profile_exists
@@ -59,8 +60,11 @@ class FakeAgent:
         self.profile_save_result = profile_save_result
         self.rewrite_error = rewrite_error
         self.save_error = save_error
+        self.profile_check_error = profile_check_error
         self.rewrite_calls = 0
         self.save_calls = 0
+        self.user_id = "sam"
+        self.profile_check_users: list[str] = []
 
     def reply(self, session_id: str, user_text: str) -> AgentReply:
         self.messages.append((session_id, user_text))
@@ -104,6 +108,9 @@ class FakeAgent:
         )
 
     def has_profile(self) -> bool:
+        self.profile_check_users.append(self.user_id)
+        if self.profile_check_error is not None:
+            raise self.profile_check_error
         return self.profile_exists
 
     def set_user(self, user_id: str) -> None:
@@ -449,11 +456,11 @@ def test_first_run_starts_onboarding_without_a_confirmation_prompt(
     assert "long-term memories are still available" not in text
 
 
-def test_returning_traveler_skips_automatic_onboarding(
+def test_startup_returning_traveler_shows_profile_available_message_and_skips_onboarding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = SessionState(session_id="session", user_id="sam")
-    console, _ = recording_console()
+    console, output = recording_console()
     onboarding_started: list[bool] = []
     monkeypatch.setattr(
         cli,
@@ -470,6 +477,7 @@ def test_returning_traveler_skips_automatic_onboarding(
     )
 
     assert onboarding_started == []
+    assert "profile is available" in output.getvalue().lower()
 
 
 def test_onboarding_skips_blank_answers() -> None:
@@ -486,9 +494,31 @@ def test_onboarding_skips_blank_answers() -> None:
     assert [fact.category for fact in agent.profile_facts] == ["preferences", "origin"]
 
 
-def test_user_command_switches_owner_and_starts_new_session() -> None:
+@pytest.mark.parametrize("command", ["/user", "/user !!!"])
+def test_user_command_with_missing_or_invalid_name_leaves_the_active_traveler_unchanged(
+    command: str,
+) -> None:
     state = SessionState(session_id="old", user_id="sam")
+    receipt = (MemoryView(memory_type="semantic", text="Vegetarian"),)
+    state.last_retrieved_memories = receipt
     agent = FakeAgent()
+    console, output = recording_console()
+
+    keep_running = handle_command(command, state, cast(TripAgent, agent), console)
+
+    assert keep_running is True
+    assert state.user_id == "sam"
+    assert state.session_id == "old"
+    assert state.last_retrieved_memories == receipt
+    assert agent.user_id == "sam"
+    assert agent.profile_check_users == []
+    assert "letter or number" in output.getvalue().lower()
+
+
+def test_user_command_switches_to_new_owner_before_checking_their_profile() -> None:
+    state = SessionState(session_id="old", user_id="sam")
+    state.last_retrieved_memories = (MemoryView(memory_type="semantic", text="Vegetarian"),)
+    agent = FakeAgent(profile_exists=True)
     console, output = recording_console()
 
     keep_running = handle_command("/user Alex", state, cast(TripAgent, agent), console)
@@ -496,8 +526,101 @@ def test_user_command_switches_owner_and_starts_new_session() -> None:
     assert keep_running is True
     assert state.user_id == "alex"
     assert state.session_id != "old"
+    assert state.last_retrieved_memories is None
     assert agent.user_id == "alex"
+    assert agent.profile_check_users == ["alex"]
     assert state.session_id in output.getvalue()
+    assert "profile is available" in output.getvalue().lower()
+
+
+def test_user_command_refreshes_the_session_for_the_same_normalized_owner() -> None:
+    state = SessionState(session_id="old", user_id="sam")
+    state.last_retrieved_memories = (MemoryView(memory_type="semantic", text="Vegetarian"),)
+    agent = FakeAgent(profile_exists=True)
+    console, _ = recording_console()
+
+    handle_command("/user SAM", state, cast(TripAgent, agent), console)
+
+    assert state.user_id == "sam"
+    assert state.session_id != "old"
+    assert state.last_retrieved_memories is None
+    assert agent.user_id == "sam"
+    assert agent.profile_check_users == ["sam"]
+
+
+def test_user_command_onboards_a_new_owner_with_the_injected_reader() -> None:
+    state = SessionState(session_id="old", user_id="sam")
+    agent = FakeAgent()
+    console, output = recording_console()
+    responses = iter(["museums", "vegetarian", "moderate", "London"])
+
+    handle_command(
+        "/user Alex",
+        state,
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: next(responses),
+    )
+
+    assert state.user_id == "alex"
+    assert agent.user_id == "alex"
+    assert agent.profile_check_users == ["alex"]
+    assert [fact.category for fact in agent.profile_facts] == [
+        "preferences",
+        "dietary",
+        "budget",
+        "origin",
+    ]
+    assert "quick travel profile" in output.getvalue().lower()
+
+
+def test_user_command_can_cancel_automatic_onboarding_for_a_new_owner() -> None:
+    state = SessionState(session_id="old", user_id="sam")
+    agent = FakeAgent()
+    console, output = recording_console()
+
+    handle_command(
+        "/user Alex",
+        state,
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: "/cancel",
+    )
+
+    assert state.user_id == "alex"
+    assert agent.user_id == "alex"
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
+    assert "no profile changes were saved" in output.getvalue().lower()
+
+
+def test_user_profile_check_failure_keeps_the_selected_owner_without_onboarding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = SessionState(session_id="old", user_id="sam")
+    state.last_retrieved_memories = (MemoryView(memory_type="semantic", text="Vegetarian"),)
+    error = TripAgentError("Profile service said [/red] unavailable.")
+    agent = FakeAgent(profile_check_error=error)
+    console, output = recording_console()
+    onboarding_started: list[bool] = []
+    monkeypatch.setattr(
+        cli,
+        "run_onboarding",
+        lambda agent, console, read_input=None: onboarding_started.append(True),
+    )
+
+    handle_command("/user Alex", state, cast(TripAgent, agent), console)
+
+    assert state.user_id == "alex"
+    assert state.session_id != "old"
+    assert state.last_retrieved_memories is None
+    assert agent.user_id == "alex"
+    assert agent.profile_check_users == ["alex"]
+    assert onboarding_started == []
+    text = output.getvalue()
+    assert "couldn't check" in text.lower()
+    assert "/onboard" in text
+    assert "[/red]" in text
 
 
 @pytest.mark.parametrize(
