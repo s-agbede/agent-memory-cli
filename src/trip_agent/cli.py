@@ -143,10 +143,20 @@ def _show_memory_rows(memories: Sequence[MemoryView], console: Console) -> None:
         line = Text("  ")
         line.append(memory.source, style="cyan")
         line.append("  ")
-        line.append(memory.memory_type, style="dim")
+        line.append(_memory_kind(memory.memory_type), style="dim")
         line.append("  ")
         line.append(memory.text)
         console.print(line)
+
+
+def _memory_kind(memory_type: str) -> str:
+    """Turn supported Redis memory kinds into friendly display labels."""
+
+    return {
+        "semantic": "semantic fact",
+        "episodic": "episodic event",
+        "message": "retained message",
+    }.get(memory_type, memory_type)
 
 
 def show_reply(reply: AgentReply, console: Console) -> None:

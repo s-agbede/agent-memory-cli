@@ -166,8 +166,12 @@ def test_reply_stores_user_loads_context_calls_web_search_and_stores_assistant()
     assert memory.calls[0].kwargs["actor_id"] == "sam"
     assert memory.calls[0].kwargs["role"] is models.MessageRole.USER
     request = cast(dict[str, object], memory.calls[2].kwargs["request"])
-    assert request["filter_"] == {"owner_id": {"eq": "sam"}}
-    assert request["limit"] == 5
+    assert request == {
+        "text": "Where should I eat?",
+        "filter_": {"owner_id": {"eq": "sam"}},
+        "limit": 5,
+        "similarity_threshold": 0.7,
+    }
     assert openai.responses.kwargs is not None
     assert openai.responses.kwargs["tools"] == [{"type": "web_search"}]
     assert str(openai.responses.kwargs["input"]).count("Where should I eat?") == 1
@@ -227,6 +231,23 @@ def test_reply_flags_a_conflicting_dated_trip_before_generating_an_itinerary() -
     assert len(openai.responses.calls) == 1
     assert "tools" not in openai.responses.calls[0]
     assert "memory.bulk_create_long_term_memories" not in timeline
+    trip_plan_request = next(
+        cast(dict[str, object], call.kwargs["request"])
+        for call in memory.calls
+        if call.name == "search_long_term_memory"
+        and cast(dict[str, object], call.kwargs["request"])["filter_"]
+        == {
+            "owner_id": {"eq": "sam"},
+            "namespace": {"eq": "trip-plans"},
+        }
+    )
+    assert trip_plan_request == {
+        "filter_": {
+            "owner_id": {"eq": "sam"},
+            "namespace": {"eq": "trip-plans"},
+        },
+        "limit": 100,
+    }
 
 
 def test_reply_saves_a_non_conflicting_dated_trip_for_future_checks() -> None:
@@ -270,18 +291,19 @@ def test_openai_failure_does_not_store_assistant_event() -> None:
     ]
 
 
-def test_search_memories_is_owner_scoped_and_normalized() -> None:
+def test_search_memories_uses_owner_scoped_semantic_request() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline)
     agent = make_agent(memory, FakeOpenAI(timeline))
 
-    rows = agent.search_memories("food preferences")
+    rows = agent.search_memories("vegetarian city break", limit=5)
 
     request = cast(dict[str, object], memory.calls[0].kwargs["request"])
     assert request == {
-        "text": "food preferences",
+        "text": "vegetarian city break",
         "filter_": {"owner_id": {"eq": "sam"}},
-        "limit": 10,
+        "limit": 5,
+        "similarity_threshold": 0.7,
     }
     assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
 
@@ -316,6 +338,37 @@ def test_search_memories_labels_direct_profile_records() -> None:
     rows = agent.search_memories("food preferences")
 
     assert [(row.source, row.text) for row in rows] == [("direct", "Sam is vegetarian.")]
+
+
+def test_search_memories_preserves_kind_and_derives_provenance_independently() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    memory.search_long_term_memory = lambda **kwargs: SimpleNamespace(
+        items=[
+            SimpleNamespace(
+                text="Vegetarian",
+                memory_type="semantic",
+                topics=["direct", "dietary"],
+            ),
+            SimpleNamespace(text="Future trip", memory_type="episodic", namespace="trip-plans"),
+            SimpleNamespace(text="Rail travel", memory_type="message", topics=[]),
+            SimpleNamespace(text="Custom", memory_type="custom"),
+            SimpleNamespace(text="Untyped", memory_type=""),
+            SimpleNamespace(text="Missing type"),
+        ]
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    rows = agent.search_memories("travel details")
+
+    assert [(row.memory_type, row.source, row.text) for row in rows] == [
+        ("semantic", "direct", "Vegetarian"),
+        ("episodic", "direct", "Future trip"),
+        ("message", "learned", "Rail travel"),
+        ("custom", "learned", "Custom"),
+        ("memory", "learned", "Untyped"),
+        ("memory", "learned", "Missing type"),
+    ]
 
 
 def test_save_profile_writes_owner_scoped_semantic_records() -> None:

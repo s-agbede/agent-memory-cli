@@ -86,6 +86,7 @@ class AssistantMemoryWarning(RuntimeError):
 
 
 MemoryRequest = models.SearchLongTermMemoryRequestContentTypedDict
+MEMORY_SIMILARITY_THRESHOLD = 0.7
 
 
 class TripAgent:
@@ -274,6 +275,7 @@ class TripAgent:
             "text": text,
             "filter_": {"owner_id": {"eq": self.user_id}},
             "limit": limit,
+            "similarity_threshold": MEMORY_SIMILARITY_THRESHOLD,
         }
         return cast(MemoryRequest, request)
 
@@ -401,12 +403,29 @@ def _memory_views(result: object) -> tuple[MemoryView, ...]:
     items = getattr(result, "items", ())
     return tuple(
         MemoryView(
-            memory_type=getattr(item, "memory_type", None) or "memory",
+            memory_type=_memory_kind(getattr(item, "memory_type", None)),
             text=getattr(item, "text", ""),
-            source="direct" if getattr(item, "namespace", None) == "profile" else "learned",
+            source=_memory_source(item),
         )
         for item in items
     )
+
+
+def _memory_source(item: object) -> str:
+    """Classify direct records without inferring their Redis memory type."""
+
+    topics = getattr(item, "topics", ())
+    if isinstance(topics, Sequence) and not isinstance(topics, str) and "direct" in topics:
+        return "direct"
+    if getattr(item, "namespace", None) in {"profile", "trip-plans"}:
+        return "direct"
+    return "learned"
+
+
+def _memory_kind(memory_type: object) -> str:
+    """Keep Redis-provided memory kinds, with a safe label for untyped records."""
+
+    return memory_type if isinstance(memory_type, str) and memory_type else "memory"
 
 
 def _trip_plan_from_memory(text: object) -> TripPlan | None:

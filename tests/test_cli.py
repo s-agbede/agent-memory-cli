@@ -279,6 +279,29 @@ def test_show_memories_labels_direct_profile_records() -> None:
     assert "direct" in output.getvalue().lower()
 
 
+def test_show_memories_renders_friendly_kinds_separately_from_provenance() -> None:
+    console, output = recording_console()
+
+    show_memories(
+        [
+            MemoryView(memory_type="semantic", text="Vegetarian", source="direct"),
+            MemoryView(memory_type="episodic", text="Paris trip", source="direct"),
+            MemoryView(memory_type="message", text="Take the train", source="learned"),
+            MemoryView(memory_type="custom[/dim]", text="Custom: [/red]", source="learned"),
+        ],
+        console,
+    )
+
+    text = output.getvalue().lower()
+    assert "semantic fact" in text
+    assert "episodic event" in text
+    assert "retained message" in text
+    assert "custom[/dim]" in text
+    assert text.count("direct") == 2
+    assert text.count("learned") == 2
+    assert "[/red]" in text
+
+
 def test_why_command_shows_memories_retrieved_for_the_last_answer() -> None:
     state = SessionState(session_id="session", user_id="sam")
     state.last_retrieved_memories = (
