@@ -187,12 +187,19 @@ def run_onboarding(
     facts: list[ProfileFact] = []
     for category, question in ONBOARDING_PROMPTS:
         console.print("[bold green]Trip agent[/bold green]: ", question, sep="")
-        answer = reader().strip()
+        try:
+            answer = reader().strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("[yellow]Onboarding cancelled. No profile changes were saved.[/yellow]")
+            return
+        if answer == "/cancel":
+            console.print("[yellow]Onboarding cancelled. No profile changes were saved.[/yellow]")
+            return
         if answer:
             facts.append(ProfileFact(category=category, text=answer))
 
     if not facts:
-        console.print("[yellow]No profile preferences were saved.[/yellow]")
+        console.print("[yellow]Nothing was saved because all answers were blank.[/yellow]")
         return
 
     try:
@@ -200,27 +207,60 @@ def run_onboarding(
             "[bold cyan]Creating concise travel memories…[/bold cyan]", spinner="dots"
         ):
             rewritten_facts = agent.rewrite_profile(tuple(facts))
+    except TripAgentError as error:
+        console.print(f"[red]{error}[/red]")
+        console.print("[yellow]No profile changes were saved. Try /onboard again.[/yellow]")
+        return
+
+    try:
         result = agent.save_profile(rewritten_facts)
     except TripAgentError as error:
         console.print(f"[red]{error}[/red]")
+        console.print("[yellow]The profile save did not finish. Try /onboard again.[/yellow]")
         return
 
-    created_count = len(result.created_categories)
-    updated_count = len(result.updated_categories)
+    created_categories = _categories_in_submitted_order(result.created_categories, rewritten_facts)
+    updated_categories = _categories_in_submitted_order(result.updated_categories, rewritten_facts)
+    failed_categories = _categories_in_submitted_order(result.failed_categories, rewritten_facts)
+    created_count = len(created_categories)
+    updated_count = len(updated_categories)
     saved_count = created_count + updated_count
-    failed_count = len(result.failed_categories)
-    console.print(
-        f"[green]Saved {saved_count} long-term profile "
-        f"{'memory' if saved_count == 1 else 'memories'} "
-        f"({created_count} created, {updated_count} updated).[/green]"
-    )
-    if failed_count:
+    failed_count = len(failed_categories)
+    if saved_count:
+        saved_details: list[str] = []
+        if created_categories:
+            saved_details.append(f"{created_count} created: {', '.join(created_categories)}")
+        if updated_categories:
+            saved_details.append(f"{updated_count} updated: {', '.join(updated_categories)}")
         console.print(
-            f"[yellow]{failed_count} profile "
-            f"{'memory was' if failed_count == 1 else 'memories were'} not saved. "
-            "Try /onboard again.[/yellow]"
+            f"[green]Saved {saved_count} long-term profile "
+            f"{'memory' if saved_count == 1 else 'memories'} "
+            f"({'; '.join(saved_details)}).[/green]"
         )
-    console.print("Next, run [cyan]/memories[/cyan] to inspect your profile.")
+    if failed_count:
+        failed_detail = (
+            f"{failed_count} profile "
+            f"{'memory was' if failed_count == 1 else 'memories were'} not saved: "
+            f"{', '.join(failed_categories)}."
+        )
+        if not saved_count:
+            console.print(
+                "[yellow]No profile changes were saved "
+                f"({failed_detail}) Try /onboard again.[/yellow]"
+            )
+            return
+        console.print(f"[yellow]{failed_detail} Try /onboard again.[/yellow]")
+    if saved_count:
+        console.print("Next, run [cyan]/memories[/cyan] to inspect your profile.")
+
+
+def _categories_in_submitted_order(
+    categories: Sequence[str], facts: Sequence[ProfileFact]
+) -> tuple[str, ...]:
+    """Return profile result categories in the order the traveler answered them."""
+
+    selected = set(categories)
+    return tuple(fact.category for fact in facts if fact.category in selected)
 
 
 def handle_command(

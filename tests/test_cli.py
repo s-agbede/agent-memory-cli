@@ -17,6 +17,7 @@ from trip_agent.agent import (
     ProfileFact,
     ProfileSaveResult,
     TripAgent,
+    TripAgentError,
 )
 from trip_agent.cli import (
     DEFAULT_MEMORY_QUERY,
@@ -47,6 +48,8 @@ class FakeAgent:
         warning: bool = False,
         profile_exists: bool = False,
         profile_save_result: ProfileSaveResult | None = None,
+        rewrite_error: TripAgentError | None = None,
+        save_error: TripAgentError | None = None,
     ) -> None:
         self.warning = warning
         self.profile_exists = profile_exists
@@ -54,6 +57,10 @@ class FakeAgent:
         self.messages: list[tuple[str, str]] = []
         self.profile_facts: list[ProfileFact] = []
         self.profile_save_result = profile_save_result
+        self.rewrite_error = rewrite_error
+        self.save_error = save_error
+        self.rewrite_calls = 0
+        self.save_calls = 0
 
     def reply(self, session_id: str, user_text: str) -> AgentReply:
         self.messages.append((session_id, user_text))
@@ -78,6 +85,9 @@ class FakeAgent:
         return (MemoryView(memory_type="preference", text="The traveler is vegetarian."),)
 
     def save_profile(self, facts: tuple[ProfileFact, ...]) -> ProfileSaveResult:
+        self.save_calls += 1
+        if self.save_error is not None:
+            raise self.save_error
         self.profile_facts.extend(facts)
         return self.profile_save_result or ProfileSaveResult(
             created_categories=tuple(fact.category for fact in facts),
@@ -86,6 +96,9 @@ class FakeAgent:
         )
 
     def rewrite_profile(self, facts: tuple[ProfileFact, ...]) -> tuple[ProfileFact, ...]:
+        self.rewrite_calls += 1
+        if self.rewrite_error is not None:
+            raise self.rewrite_error
         return tuple(
             ProfileFact(category=fact.category, text=f"Rewritten: {fact.text}") for fact in facts
         )
@@ -149,6 +162,100 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    "responses",
+    [
+        [" /cancel "],
+        ["food and museums", "/cancel"],
+        ["food and museums", "vegetarian", "/cancel"],
+        ["food and museums", "vegetarian", "moderate", "/cancel"],
+    ],
+)
+def test_onboarding_cancels_the_entire_attempt_for_an_exact_cancel_answer(
+    responses: list[str],
+) -> None:
+    agent = FakeAgent()
+    console, output = recording_console()
+    answers = iter(responses)
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(answers))
+
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
+    assert agent.profile_facts == []
+    assert "no profile changes were saved" in output.getvalue().lower()
+
+
+@pytest.mark.parametrize("error", [EOFError(), KeyboardInterrupt()])
+def test_onboarding_input_interruptions_cancel_the_entire_attempt(
+    error: BaseException,
+) -> None:
+    agent = FakeAgent()
+    console, output = recording_console()
+
+    def raise_input_error() -> str:
+        raise error
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=raise_input_error)
+
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
+    assert "no profile changes were saved" in output.getvalue().lower()
+
+
+@pytest.mark.parametrize("answer", ["Please do not /cancel this trip", "/CANCEL"])
+def test_onboarding_treats_cancel_text_as_an_answer_unless_it_is_exact(answer: str) -> None:
+    agent = FakeAgent()
+    console, _ = recording_console()
+    responses = iter([answer, "", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert agent.rewrite_calls == 1
+    assert agent.save_calls == 1
+    assert [fact.category for fact in agent.profile_facts] == ["preferences"]
+
+
+def test_onboarding_with_only_blank_answers_does_not_rewrite_or_save() -> None:
+    agent = FakeAgent()
+    console, output = recording_console()
+    responses = iter(["", "  ", "", "\t"])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
+    assert "nothing was saved" in output.getvalue().lower()
+
+
+def test_onboarding_does_not_save_when_rewrite_fails_and_invites_retry() -> None:
+    agent = FakeAgent(rewrite_error=TripAgentError("I couldn't rewrite your profile answers."))
+    console, output = recording_console()
+    responses = iter(["food and museums", "", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert agent.rewrite_calls == 1
+    assert agent.save_calls == 0
+    assert "couldn't rewrite" in output.getvalue().lower()
+    assert "try /onboard again" in output.getvalue().lower()
+    assert "saved 1" not in output.getvalue().lower()
+
+
+def test_onboarding_reports_save_failure_without_claiming_success() -> None:
+    agent = FakeAgent(save_error=TripAgentError("I couldn't save your profile."))
+    console, output = recording_console()
+    responses = iter(["food and museums", "", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert agent.rewrite_calls == 1
+    assert agent.save_calls == 1
+    assert "couldn't save" in output.getvalue().lower()
+    assert "try /onboard again" in output.getvalue().lower()
+    assert "saved 1" not in output.getvalue().lower()
+
+
 def test_onboarding_reports_update_only_result_as_saved_and_updated() -> None:
     agent = FakeAgent(
         profile_save_result=ProfileSaveResult(
@@ -168,11 +275,11 @@ def test_onboarding_reports_update_only_result_as_saved_and_updated() -> None:
 
     text = output.getvalue()
     assert "Saved 1 long-term profile memory" in text
-    assert "1 updated" in text
+    assert "1 updated: dietary" in text
     assert "Saved 0" not in text
 
 
-def test_onboarding_reports_created_updated_and_failed_category_counts() -> None:
+def test_onboarding_reports_created_updated_and_failed_categories_in_submitted_order() -> None:
     agent = FakeAgent(
         profile_save_result=ProfileSaveResult(
             created_categories=("preferences",),
@@ -191,8 +298,49 @@ def test_onboarding_reports_created_updated_and_failed_category_counts() -> None
 
     text = output.getvalue()
     assert "Saved 2 long-term profile memories" in text
-    assert "1 created, 1 updated" in text
-    assert "1 profile memory was not saved" in text
+    assert "1 created: preferences" in text
+    assert "1 updated: dietary" in text
+    assert "1 profile memory was not saved: budget" in text
+
+
+def test_onboarding_reports_an_all_failed_result_without_a_success_claim() -> None:
+    agent = FakeAgent(
+        profile_save_result=ProfileSaveResult(
+            created_categories=(),
+            updated_categories=(),
+            failed_categories=("dietary", "preferences"),
+        )
+    )
+    console, output = recording_console()
+    responses = iter(["museums", "vegetarian", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    text = output.getvalue().lower()
+    assert "saved 0" not in text
+    assert "no profile changes were saved" in text
+    assert text.rfind("preferences") < text.rfind("dietary")
+    assert "try /onboard again" in text
+
+
+def test_manual_onboard_command_uses_the_cancellable_onboarding_flow() -> None:
+    state = SessionState(session_id="session", user_id="sam")
+    agent = FakeAgent()
+    console, output = recording_console()
+    responses = iter(["/cancel"])
+
+    keep_running = handle_command(
+        "/onboard",
+        state,
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: next(responses),
+    )
+
+    assert keep_running is True
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
+    assert "no profile changes were saved" in output.getvalue().lower()
 
 
 def test_repl_explains_background_promotion_after_a_chat_turn() -> None:
