@@ -1,9 +1,11 @@
 """Tests for model context and source-link formatting."""
 
+from io import StringIO
 from types import SimpleNamespace
 
 from redis_agent_memory import models
-from rich.text import Text
+from rich.console import Console
+from rich.markdown import Markdown
 
 from trip_agent.formatting import build_model_input, extract_citations, render_reply
 
@@ -91,11 +93,8 @@ def test_extract_and_render_clickable_citations_with_unique_sources() -> None:
     rendered, sources = render_reply(response.output_text, citations)
 
     assert len(citations) == 2
-    assert isinstance(rendered, Text)
-    assert [span.style for span in rendered.spans] == [
-        "link https://example.com/kyoto",
-        "link https://example.com/kyoto",
-    ]
+    assert isinstance(rendered, Markdown)
+    assert rendered.markup.count("https://example.com/kyoto") == 2
     assert len(sources) == 1
     assert "Kyoto guide" in sources[0].plain
 
@@ -130,3 +129,16 @@ def test_extract_citations_offsets_multiple_output_blocks() -> None:
 
     assert citations[0].start_index == 7
     assert citations[0].end_index == 13
+
+
+def test_render_reply_renders_model_markdown_instead_of_displaying_syntax() -> None:
+    rendered, _ = render_reply("**Kyoto highlights**\n\n- Nishiki Market", ())
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, color_system=None)
+
+    console.print(rendered)
+
+    assert isinstance(rendered, Markdown)
+    assert "**" not in output.getvalue()
+    assert "Kyoto highlights" in output.getvalue()
+    assert "Nishiki Market" in output.getvalue()

@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Literal, cast
 
 from openai.types.responses.response_input_param import ResponseInputParam
+from rich.markdown import Markdown
 from rich.text import Text
 
 
@@ -153,15 +154,16 @@ def extract_citations(response: object) -> tuple[Citation, ...]:
     return tuple(citations)
 
 
-def render_reply(text: str, citations: Sequence[Citation]) -> tuple[Text, tuple[Text, ...]]:
+def render_reply(text: str, citations: Sequence[Citation]) -> tuple[Markdown, tuple[Text, ...]]:
     """Render inline terminal links and a de-duplicated source list."""
 
-    rendered = Text(text)
-    for citation in citations:
+    rendered_text = text
+    for citation in sorted(citations, key=lambda item: item.start_index, reverse=True):
         start = max(0, min(len(text), citation.start_index))
         end = max(start, min(len(text), citation.end_index))
         if start != end:
-            rendered.stylize(f"link {citation.url}", start, end)
+            label = text[start:end]
+            rendered_text = f"{rendered_text[:start]}[{label}]({citation.url}){rendered_text[end:]}"
 
     sources: list[Text] = []
     seen_urls: set[str] = set()
@@ -170,4 +172,4 @@ def render_reply(text: str, citations: Sequence[Citation]) -> tuple[Text, tuple[
             continue
         seen_urls.add(citation.url)
         sources.append(Text.assemble((citation.title, f"link {citation.url}")))
-    return rendered, tuple(sources)
+    return Markdown(rendered_text), tuple(sources)
