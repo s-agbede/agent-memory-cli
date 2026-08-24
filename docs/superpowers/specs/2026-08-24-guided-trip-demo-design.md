@@ -15,6 +15,7 @@ Make the existing terminal trip agent feel like a polished, repeatable eight-to-
 - Store each answer through the existing session-event path, allowing Redis Agent Memory's managed background promotion to create long-term memory.
 - Make the distinction between immediate session persistence and asynchronous promotion clear in terminal copy.
 - Preserve the existing `/memories` and `/new` reveal: a new session loses short-term conversation history but can retrieve the same traveler's long-term memories.
+- Allow the presenter to switch to a different traveler without restarting the CLI.
 - Reject unsafe owner IDs and non-HTTPS Agent Memory endpoints before startup.
 
 ## Non-goals
@@ -40,11 +41,15 @@ For every non-empty answer, the CLI sends a normal natural-language message to `
 
 At the end of onboarding, the CLI gives the presenter the next two commands to show: `/memories` after a short wait or an edit, and `/new` to create the clean-session recall reveal. Existing free-form chat remains available after onboarding.
 
+`/user <name>` changes the active traveler while the CLI is running. The command normalizes `<name>` using the same rule as the startup prompt, creates a new UUID session, and reconstructs the `TripAgent` with the new owner ID. It prints the active traveler and explains that only this traveler's owner-scoped long-term memories can be recalled. It does not automatically run onboarding for the new traveler; the presenter may use normal chat or start onboarding with `/onboard`.
+
+`/onboard` runs the same four prompts for the current traveler and current session. This lets the presenter create a second dummy account in one run without adding account persistence or authentication. Onboarding cannot change the active traveler; `/user` is the sole identity-switching command.
+
 ## Components
 
-- `src/trip_agent/cli.py` owns name normalization, prompts, onboarding sequencing, terminal lifecycle copy, and construction of `TripAgent` using the prompted owner ID.
+- `src/trip_agent/cli.py` owns name normalization, prompts, onboarding sequencing, terminal lifecycle copy, the `/user` and `/onboard` commands, and construction of `TripAgent` using the active owner ID.
 - `src/trip_agent/config.py` validates an HTTPS Agent Memory endpoint and keeps `TRIP_AGENT_USER_ID` as a safe default owner ID.
-- `tests/test_cli.py` covers normalized identity, invalid re-prompting, onboarding ordering, skip behavior, lifecycle copy, and the existing slash-command flow.
+- `tests/test_cli.py` covers normalized identity, invalid re-prompting, onboarding ordering, skip behavior, lifecycle copy, user switches, and the existing slash-command flow.
 - `tests/test_config.py` covers HTTP endpoint rejection and invalid owner IDs.
 - `README.md` documents the guided video sequence and clearly frames promotion and deduplication as managed, asynchronous Redis behavior.
 
@@ -63,3 +68,4 @@ Follow red-green-refactor. Test every new pure helper and observable CLI outcome
 3. Point out that each response is saved to session memory immediately and promotion happens in the background.
 4. After a rehearsed pause or edit, use `/memories` to show extracted memory. Explain that managed promotion and deduplication timing is asynchronous.
 5. Run `/new` and ask for a current recommendation. The terminal can use owner-scoped long-term context and web search while the new session begins with no prior conversation history.
+6. Run `/user Alex` to demonstrate isolation: Alex receives a new session and cannot recall Maya's memories. Run `/onboard` to create Alex's preferences in the same terminal session.
