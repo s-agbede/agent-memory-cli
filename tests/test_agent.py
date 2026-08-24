@@ -36,12 +36,14 @@ class FakeMemory:
         fail_profile_write: bool = False,
         profile_errors: int = 0,
         trip_plans: list[object] | None = None,
+        profile_exists: bool = False,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
         self.fail_profile_write = fail_profile_write
         self.profile_errors = profile_errors
         self.trip_plans = trip_plans or []
+        self.profile_exists = profile_exists
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -74,6 +76,12 @@ class FakeMemory:
         namespace = cast(dict[str, object], filter_.get("namespace", {}))
         if namespace.get("eq") == "trip-plans":
             return SimpleNamespace(items=self.trip_plans)
+        if namespace.get("eq") == "profile":
+            return SimpleNamespace(
+                items=[SimpleNamespace(text="The traveler is vegetarian.")]
+                if self.profile_exists
+                else []
+            )
         return SimpleNamespace(
             items=[SimpleNamespace(text="Sam is vegetarian.", memory_type="preference")]
         )
@@ -274,6 +282,23 @@ def test_search_memories_is_owner_scoped_and_normalized() -> None:
         "limit": 10,
     }
     assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
+
+
+def test_has_profile_checks_only_direct_profile_records_for_the_active_owner() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, profile_exists=True)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    assert agent.has_profile() is True
+
+    request = cast(dict[str, object], memory.calls[0].kwargs["request"])
+    assert request == {
+        "filter_": {
+            "owner_id": {"eq": "sam"},
+            "namespace": {"eq": "profile"},
+        },
+        "limit": 1,
+    }
 
 
 def test_search_memories_labels_direct_profile_records() -> None:

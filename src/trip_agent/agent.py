@@ -191,6 +191,25 @@ class TripAgent:
             for item in result.items
         )
 
+    def has_profile(self) -> bool:
+        """Return whether this traveler has at least one direct onboarding record."""
+
+        request = cast(
+            MemoryRequest,
+            {
+                "filter_": {
+                    "owner_id": {"eq": self.user_id},
+                    "namespace": {"eq": "profile"},
+                },
+                "limit": 1,
+            },
+        )
+        try:
+            result = self.memory.search_long_term_memory(request=request)
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't check your saved travel profile.") from error
+        return bool(result.items)
+
     def rewrite_profile(self, facts: Sequence[ProfileFact]) -> tuple[ProfileFact, ...]:
         """Turn explicit profile answers into concise, durable memory statements."""
 

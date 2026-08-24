@@ -255,7 +255,11 @@ def run_repl(
     console.print("Type [cyan]/help[/cyan] to see the available commands.")
 
     if offer_onboarding:
-        run_onboarding(agent, console, read_input)
+        try:
+            if not agent.has_profile():
+                run_onboarding(agent, console, read_input)
+        except TripAgentError as error:
+            console.print(f"[yellow]{error} Run /onboard when you're ready.[/yellow]")
 
     while True:
         try:

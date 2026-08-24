@@ -42,8 +42,9 @@ VALID_ENV = {
 class FakeAgent:
     """Small fake for observable CLI behavior."""
 
-    def __init__(self, warning: bool = False) -> None:
+    def __init__(self, warning: bool = False, profile_exists: bool = False) -> None:
         self.warning = warning
+        self.profile_exists = profile_exists
         self.memory_query: str | None = None
         self.messages: list[tuple[str, str]] = []
         self.profile_facts: list[ProfileFact] = []
@@ -78,6 +79,9 @@ class FakeAgent:
         return tuple(
             ProfileFact(category=fact.category, text=f"Rewritten: {fact.text}") for fact in facts
         )
+
+    def has_profile(self) -> bool:
+        return self.profile_exists
 
     def set_user(self, user_id: str) -> None:
         self.user_id = user_id
@@ -174,6 +178,29 @@ def test_first_run_starts_onboarding_without_a_confirmation_prompt(
     assert onboarding_started == [True]
     assert "Save a travel profile" not in text
     assert "long-term memories are still available" not in text
+
+
+def test_returning_traveler_skips_automatic_onboarding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = SessionState(session_id="session", user_id="sam")
+    console, _ = recording_console()
+    onboarding_started: list[bool] = []
+    monkeypatch.setattr(
+        cli,
+        "run_onboarding",
+        lambda agent, console, read_input=None: onboarding_started.append(True),
+    )
+
+    run_repl(
+        cast(TripAgent, FakeAgent(profile_exists=True)),
+        state,
+        console,
+        read_input=lambda: "/exit",
+        offer_onboarding=True,
+    )
+
+    assert onboarding_started == []
 
 
 def test_onboarding_skips_blank_answers() -> None:

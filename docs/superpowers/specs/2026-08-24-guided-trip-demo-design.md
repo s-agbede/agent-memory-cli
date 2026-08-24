@@ -31,7 +31,7 @@ Make the existing terminal trip agent feel like a polished, repeatable eight-to-
 
 At launch, the CLI prompts for a display name. It normalizes the name to a stable, Redis-safe owner ID: lowercase words joined with hyphens, using only letters, numbers, and hyphens. If a supplied name cannot produce an ID, it asks again. The default is the configured `TRIP_AGENT_USER_ID`, retaining a convenient scripted-demo fallback.
 
-After the greeting, the CLI offers onboarding only for the current first session. It asks these four concise questions:
+After the greeting, the CLI starts onboarding only when the active traveler has no direct profile records. It asks these four concise questions:
 
 1. What kinds of trips and places do you enjoy?
 2. What food or dietary needs should I remember?
