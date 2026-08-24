@@ -9,7 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import pytest
 from openai import OpenAI, OpenAIError
-from redis_agent_memory import AgentMemory, models
+from redis_agent_memory import AgentMemory, errors, models
 
 from trip_agent.agent import (
     AssistantMemoryWarning,
@@ -45,6 +45,9 @@ class FakeMemory:
         fail_profile_lookup: bool = False,
         unaccounted_profile_categories: set[str] | None = None,
         profile_error_categories: set[str] | None = None,
+        profile_lookup_error: Exception | None = None,
+        profile_write_error: Exception | None = None,
+        profile_update_errors: dict[str, Exception] | None = None,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
@@ -57,6 +60,9 @@ class FakeMemory:
         self.fail_profile_lookup = fail_profile_lookup
         self.unaccounted_profile_categories = unaccounted_profile_categories or set()
         self.profile_error_categories = profile_error_categories
+        self.profile_lookup_error = profile_lookup_error
+        self.profile_write_error = profile_write_error
+        self.profile_update_errors = profile_update_errors or {}
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -90,6 +96,8 @@ class FakeMemory:
         if namespace.get("eq") == "trip-plans":
             return SimpleNamespace(items=self.trip_plans)
         if namespace.get("eq") == "profile":
+            if self.profile_lookup_error is not None:
+                raise self.profile_lookup_error
             if self.fail_profile_lookup:
                 raise httpx.ConnectError("Redis is unavailable")
             if self.profile_items is not None:
@@ -106,6 +114,8 @@ class FakeMemory:
     def bulk_create_long_term_memories(self, **kwargs: object) -> object:
         self.timeline.append("memory.bulk_create_long_term_memories")
         self.calls.append(Call("bulk_create_long_term_memories", kwargs))
+        if self.profile_write_error is not None:
+            raise self.profile_write_error
         if self.fail_profile_write:
             raise httpx.ConnectError("Redis is unavailable")
         records = cast(list[dict[str, object]], kwargs["memories"])
@@ -138,6 +148,9 @@ class FakeMemory:
     def update_long_term_memory(self, **kwargs: object) -> object:
         self.timeline.append("memory.update_long_term_memory")
         self.calls.append(Call("update_long_term_memory", kwargs))
+        error = self.profile_update_errors.get(cast(str, kwargs["memory_id"]))
+        if error is not None:
+            raise error
         if kwargs["memory_id"] in self.fail_profile_update_ids:
             raise httpx.ConnectError("Redis is unavailable")
         return SimpleNamespace()
@@ -428,6 +441,33 @@ def test_save_profile_empty_input_returns_empty_categories_without_redis_call() 
     assert memory.calls == []
 
 
+def test_save_profile_rejects_unsupported_categories_before_redis_io() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="Unsupported profile category: activities"):
+        agent.save_profile((ProfileFact(category="activities", text="Museums"),))
+
+    assert memory.calls == []
+
+
+def test_save_profile_rejects_duplicate_categories_before_redis_io() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="Duplicate profile category: dietary"):
+        agent.save_profile(
+            (
+                ProfileFact(category="dietary", text="Vegetarian"),
+                ProfileFact(category="dietary", text="No shellfish"),
+            )
+        )
+
+    assert memory.calls == []
+
+
 def test_save_profile_looks_up_the_owner_profile_once_with_filters_only() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline)
@@ -549,6 +589,37 @@ def test_save_profile_updates_the_newest_duplicate_category_record() -> None:
     update_calls = [call for call in memory.calls if call.name == "update_long_term_memory"]
     assert len(update_calls) == 1
     assert update_calls[0].kwargs["memory_id"] == "newest-id"
+
+
+def test_save_profile_scans_malformed_multi_category_topics_in_canonical_order() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        profile_items=[
+            SimpleNamespace(
+                id="malformed-id",
+                topics=["direct", "origin", "preferences"],
+                updated_at=datetime(2026, 5, 1, tzinfo=UTC),
+            )
+        ],
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="preferences", text="Quiet places"),
+            ProfileFact(category="origin", text="London"),
+        )
+    )
+
+    update_call = next(call for call in memory.calls if call.name == "update_long_term_memory")
+    bulk_call = next(call for call in memory.calls if call.name == "bulk_create_long_term_memories")
+    created = cast(list[dict[str, object]], bulk_call.kwargs["memories"])
+    assert update_call.kwargs["memory_id"] == "malformed-id"
+    assert update_call.kwargs["topics"] == ["direct", "preferences"]
+    assert [record["topics"] for record in created] == [["direct", "origin"]]
+    assert result.updated_categories == ("preferences",)
+    assert result.created_categories == ("origin",)
 
 
 def test_save_profile_uses_stable_first_match_for_missing_or_malformed_timestamps() -> None:
@@ -703,12 +774,51 @@ def test_rewrite_profile_rejects_invalid_model_output() -> None:
         agent.rewrite_profile((ProfileFact(category="budget", text="Moderate"),))
 
 
-def test_save_profile_reports_redis_failure() -> None:
+def test_save_profile_marks_all_missing_categories_failed_when_bulk_request_fails() -> None:
     timeline: list[str] = []
     agent = make_agent(FakeMemory(timeline, fail_profile_write=True), FakeOpenAI(timeline))
 
-    with pytest.raises(TripAgentError, match="long-term travel profile"):
-        agent.save_profile((ProfileFact(category="dietary", text="Vegetarian"),))
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate"),
+        )
+    )
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=(),
+        failed_categories=("dietary", "budget"),
+    )
+
+
+def test_save_profile_preserves_successful_updates_when_create_batch_fails() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        fail_profile_write=True,
+        profile_items=[
+            SimpleNamespace(
+                id="dietary-id",
+                topics=["direct", "dietary"],
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        ],
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate"),
+        )
+    )
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=("dietary",),
+        failed_categories=("budget",),
+    )
 
 
 def test_save_profile_reports_lookup_failure_before_any_write() -> None:
@@ -720,6 +830,71 @@ def test_save_profile_reports_lookup_failure_before_any_write() -> None:
         agent.save_profile((ProfileFact(category="dietary", text="Vegetarian"),))
 
     assert timeline == ["memory.search_long_term_memory"]
+
+
+def test_save_profile_translates_no_response_profile_lookup_failure() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, profile_lookup_error=errors.NoResponseError())
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="load your long-term travel profile"):
+        agent.save_profile((ProfileFact(category="dietary", text="Vegetarian"),))
+
+    assert timeline == ["memory.search_long_term_memory"]
+
+
+def test_save_profile_marks_no_response_update_failed_and_continues() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        profile_update_errors={"dietary-id": errors.NoResponseError()},
+        profile_items=[
+            SimpleNamespace(
+                id="dietary-id",
+                topics=["direct", "dietary"],
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+            SimpleNamespace(
+                id="budget-id",
+                topics=["direct", "budget"],
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            ),
+        ],
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate"),
+        )
+    )
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=("budget",),
+        failed_categories=("dietary",),
+    )
+    assert [call.name for call in memory.calls].count("update_long_term_memory") == 2
+
+
+def test_save_profile_marks_no_response_create_batch_categories_failed() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, profile_write_error=errors.NoResponseError())
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="preferences", text="Quiet places"),
+            ProfileFact(category="origin", text="London"),
+        )
+    )
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=(),
+        failed_categories=("preferences", "origin"),
+    )
 
 
 def test_save_profile_reports_partial_bulk_failure() -> None:

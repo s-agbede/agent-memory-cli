@@ -51,18 +51,6 @@ class ProfileSaveResult:
     updated_categories: tuple[str, ...]
     failed_categories: tuple[str, ...]
 
-    @property
-    def created_count(self) -> int:
-        """Return the number of newly created categories for the current CLI."""
-
-        return len(self.created_categories)
-
-    @property
-    def failed_count(self) -> int:
-        """Return the number of failed categories for the current CLI."""
-
-        return len(self.failed_categories)
-
 
 @dataclass(frozen=True, slots=True)
 class TripPlan:
@@ -100,7 +88,7 @@ class AssistantMemoryWarning(RuntimeError):
 
 MemoryRequest = models.SearchLongTermMemoryRequestContentTypedDict
 MEMORY_SIMILARITY_THRESHOLD = 0.7
-PROFILE_CATEGORIES = frozenset({"preferences", "dietary", "budget", "origin"})
+PROFILE_CATEGORIES = ("preferences", "dietary", "budget", "origin")
 
 
 class TripAgent:
@@ -265,6 +253,7 @@ class TripAgent:
             return ProfileSaveResult(
                 created_categories=(), updated_categories=(), failed_categories=()
             )
+        _validate_profile_facts(facts)
 
         request = cast(
             MemoryRequest,
@@ -277,7 +266,7 @@ class TripAgent:
         )
         try:
             profile = self.memory.search_long_term_memory(request=request)
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
             raise TripAgentError("I couldn't load your long-term travel profile.") from error
 
         existing_by_category = _latest_profile_record_ids(profile.items)
@@ -298,7 +287,7 @@ class TripAgent:
                     namespace="profile",
                     owner_id=self.user_id,
                 )
-            except (errors.AgentMemoryError, httpx.RequestError):
+            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
                 failed_categories.append(fact.category)
             else:
                 updated_categories.append(fact.category)
@@ -318,16 +307,16 @@ class TripAgent:
         if records:
             try:
                 result = self.memory.bulk_create_long_term_memories(memories=records)
-            except (errors.AgentMemoryError, httpx.RequestError) as error:
-                raise TripAgentError("I couldn't save your long-term travel profile.") from error
-
-            created_ids = set(result.created)
-            error_ids = {error.id for error in result.errors or ()}
-            for fact, record in zip(missing_facts, records, strict=True):
-                if record["id"] in created_ids and record["id"] not in error_ids:
-                    created_categories.append(fact.category)
-                else:
-                    failed_categories.append(fact.category)
+            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
+                failed_categories.extend(fact.category for fact in missing_facts)
+            else:
+                created_ids = set(result.created)
+                error_ids = {error.id for error in result.errors or ()}
+                for fact, record in zip(missing_facts, records, strict=True):
+                    if record["id"] in created_ids and record["id"] not in error_ids:
+                        created_categories.append(fact.category)
+                    else:
+                        failed_categories.append(fact.category)
 
         created = set(created_categories)
         updated = set(updated_categories)
@@ -466,15 +455,24 @@ def _profile_text(value: object) -> str:
 
 
 def _profile_category(item: object) -> str | None:
-    """Return the first supported profile category tagged on a memory record."""
+    """Return the first canonical profile category tagged on a memory record."""
 
     topics = getattr(item, "topics", None)
     if not isinstance(topics, Sequence) or isinstance(topics, (str, bytes)):
         return None
-    return next(
-        (topic for topic in topics if isinstance(topic, str) and topic in PROFILE_CATEGORIES),
-        None,
-    )
+    return next((category for category in PROFILE_CATEGORIES if category in topics), None)
+
+
+def _validate_profile_facts(facts: Sequence[ProfileFact]) -> None:
+    """Reject unsupported or repeated profile categories before Redis access."""
+
+    seen: set[str] = set()
+    for fact in facts:
+        if fact.category not in PROFILE_CATEGORIES:
+            raise TripAgentError(f"Unsupported profile category: {fact.category}.")
+        if fact.category in seen:
+            raise TripAgentError(f"Duplicate profile category: {fact.category}.")
+        seen.add(fact.category)
 
 
 def _latest_profile_record_ids(items: Sequence[object]) -> dict[str, str]:

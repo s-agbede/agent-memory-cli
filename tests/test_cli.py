@@ -42,12 +42,18 @@ VALID_ENV = {
 class FakeAgent:
     """Small fake for observable CLI behavior."""
 
-    def __init__(self, warning: bool = False, profile_exists: bool = False) -> None:
+    def __init__(
+        self,
+        warning: bool = False,
+        profile_exists: bool = False,
+        profile_save_result: ProfileSaveResult | None = None,
+    ) -> None:
         self.warning = warning
         self.profile_exists = profile_exists
         self.memory_query: str | None = None
         self.messages: list[tuple[str, str]] = []
         self.profile_facts: list[ProfileFact] = []
+        self.profile_save_result = profile_save_result
 
     def reply(self, session_id: str, user_text: str) -> AgentReply:
         self.messages.append((session_id, user_text))
@@ -73,7 +79,11 @@ class FakeAgent:
 
     def save_profile(self, facts: tuple[ProfileFact, ...]) -> ProfileSaveResult:
         self.profile_facts.extend(facts)
-        return ProfileSaveResult(created_count=len(facts), failed_count=0)
+        return self.profile_save_result or ProfileSaveResult(
+            created_categories=tuple(fact.category for fact in facts),
+            updated_categories=(),
+            failed_categories=(),
+        )
 
     def rewrite_profile(self, facts: tuple[ProfileFact, ...]) -> tuple[ProfileFact, ...]:
         return tuple(
@@ -137,6 +147,52 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
         "Rewritten: moderate",
         "Rewritten: relaxed",
     ]
+
+
+def test_onboarding_reports_update_only_result_as_saved_and_updated() -> None:
+    agent = FakeAgent(
+        profile_save_result=ProfileSaveResult(
+            created_categories=(),
+            updated_categories=("dietary",),
+            failed_categories=(),
+        )
+    )
+    console, output = recording_console()
+    responses = iter(["", "vegetarian", "", ""])
+
+    run_onboarding(
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: next(responses),
+    )
+
+    text = output.getvalue()
+    assert "Saved 1 long-term profile memory" in text
+    assert "1 updated" in text
+    assert "Saved 0" not in text
+
+
+def test_onboarding_reports_created_updated_and_failed_category_counts() -> None:
+    agent = FakeAgent(
+        profile_save_result=ProfileSaveResult(
+            created_categories=("preferences",),
+            updated_categories=("dietary",),
+            failed_categories=("budget",),
+        )
+    )
+    console, output = recording_console()
+    responses = iter(["museums", "vegetarian", "moderate", ""])
+
+    run_onboarding(
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: next(responses),
+    )
+
+    text = output.getvalue()
+    assert "Saved 2 long-term profile memories" in text
+    assert "1 created, 1 updated" in text
+    assert "1 profile memory was not saved" in text
 
 
 def test_repl_explains_background_promotion_after_a_chat_turn() -> None:

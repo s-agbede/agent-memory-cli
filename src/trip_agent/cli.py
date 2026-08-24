@@ -205,14 +205,19 @@ def run_onboarding(
         console.print(f"[red]{error}[/red]")
         return
 
+    created_count = len(result.created_categories)
+    updated_count = len(result.updated_categories)
+    saved_count = created_count + updated_count
+    failed_count = len(result.failed_categories)
     console.print(
-        f"[green]Saved {result.created_count} long-term profile "
-        f"{'memory' if result.created_count == 1 else 'memories'}.[/green]"
+        f"[green]Saved {saved_count} long-term profile "
+        f"{'memory' if saved_count == 1 else 'memories'} "
+        f"({created_count} created, {updated_count} updated).[/green]"
     )
-    if result.failed_count:
+    if failed_count:
         console.print(
-            f"[yellow]{result.failed_count} profile "
-            f"{'memory was' if result.failed_count == 1 else 'memories were'} not saved. "
+            f"[yellow]{failed_count} profile "
+            f"{'memory was' if failed_count == 1 else 'memories were'} not saved. "
             "Try /onboard again.[/yellow]"
         )
     console.print("Next, run [cyan]/memories[/cyan] to inspect your profile.")
