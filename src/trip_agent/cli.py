@@ -434,7 +434,7 @@ def main() -> None:
                 raise typer.Exit(code=1) from None
 
             try:
-                memory.list_sessions(limit=1)
+                memory.list_sessions(limit=1, include_all=True)
             except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
                 console.print(
                     "[red]Couldn't validate Redis Agent Memory Store ID. Check "

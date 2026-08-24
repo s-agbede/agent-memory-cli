@@ -161,8 +161,9 @@ Unknown or custom memory types are displayed verbatim, while a missing type is d
 ## Startup Validation
 
 The existing `/health` request remains. Startup then calls the read-only
-`list_sessions(limit=1)` operation. This validates that the configured Store ID is reachable before
-entering the REPL without creating session events, promotion jobs, or test data.
+`list_sessions(limit=1, include_all=True)` operation. The SDK requires this explicit all-sessions
+scope when no owner filter is supplied. This validates that the configured Store ID is reachable
+before entering the REPL without creating session events, promotion jobs, or test data.
 
 The opt-in integration test performs the same health and read-only store checks. It does not write
 an event because even a short-lived test event can enqueue background promotion.

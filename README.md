@@ -218,9 +218,10 @@ uv run mypy src
 ```
 
 The normal suite never calls Redis or OpenAI. The application startup check and the opt-in
-integration test each call `health()` plus read-only `list_sessions(limit=1)`—they create no
-events or memories and do not trigger promotion test data. To run that real Redis check without
-calling OpenAI:
+integration test each call `health()` plus read-only `list_sessions(limit=1, include_all=True)`.
+The SDK requires this explicit all-sessions scope when no owner filter is supplied. These checks
+create no events or memories and do not trigger promotion test data. To run that real Redis check
+without calling OpenAI:
 
 ```bash
 RUN_REDIS_INTEGRATION=1 uv run pytest tests/test_integration.py -v

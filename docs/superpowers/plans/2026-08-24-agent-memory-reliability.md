@@ -284,7 +284,7 @@
 - Test: `tests/test_cli.py`
 - Modify: `tests/test_integration.py`
 
-1. Add failing entrypoint tests proving startup calls both `health()` and read-only `list_sessions(limit=1)` before the REPL.
+1. Add failing entrypoint tests proving startup calls both `health()` and read-only `list_sessions(limit=1, include_all=True)` before the REPL. The SDK requires this explicit all-sessions scope when no owner filter is supplied.
 
 2. Add a failing test proving a store-read failure exits with a clear Store ID/configuration message and does not start the REPL.
 
@@ -292,12 +292,12 @@
 
    ```python
    memory.health()
-   memory.list_sessions(limit=1)
+   memory.list_sessions(limit=1, include_all=True)
    ```
 
    Keep connection/health and Store ID/read errors distinguishable in user-facing copy where possible.
 
-4. Extend the opt-in integration test to run the same health and read-only `list_sessions(limit=1)` checks. Do not write a session event because it could trigger background promotion and pollute the demonstration store.
+4. Extend the opt-in integration test to run the same health and read-only `list_sessions(limit=1, include_all=True)` checks. Do not write a session event because it could trigger background promotion and pollute the demonstration store.
 
 5. Run:
 
@@ -372,7 +372,7 @@
    RUN_REDIS_INTEGRATION=1 uv run pytest tests/test_integration.py -v
    ```
 
-   Expected: health and `list_sessions(limit=1)` pass without creating any events or long-term memories.
+   Expected: health and `list_sessions(limit=1, include_all=True)` pass without creating any events or long-term memories.
 
 3. Request an independent code review against the approved design. Fix every confirmed issue test-first, then rerun the complete verification suite.
 

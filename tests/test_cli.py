@@ -812,6 +812,7 @@ class FakeMemoryContext:
         self.list_sessions_error = list_sessions_error
         self.health_called = False
         self.list_sessions_limits: list[int | None] = []
+        self.list_sessions_include_all: list[bool | None] = []
         self.timeline: list[str] = []
 
     def __enter__(self) -> "FakeMemoryContext":
@@ -827,8 +828,14 @@ class FakeMemoryContext:
             raise self.health_error
         return object()
 
-    def list_sessions(self, *, limit: int | None = None) -> object:
+    def list_sessions(
+        self,
+        *,
+        limit: int | None = None,
+        include_all: bool | None = None,
+    ) -> object:
         self.list_sessions_limits.append(limit)
+        self.list_sessions_include_all.append(include_all)
         self.timeline.append("list_sessions")
         if self.list_sessions_error is not None:
             raise self.list_sessions_error
@@ -865,6 +872,7 @@ def test_cli_entrypoint_composes_clients_and_starts_repl(
     assert result.exit_code == 0
     assert memory.health_called is True
     assert memory.list_sessions_limits == [1]
+    assert memory.list_sessions_include_all == [True]
     assert memory.timeline == ["health", "list_sessions", "openai", "prompt", "repl"]
     assert started and started[0][0] == "maya"
 
@@ -906,6 +914,7 @@ def test_cli_entrypoint_reports_redis_health_failure(
     assert result.exit_code == 1
     assert "Couldn't connect to Redis Agent Memory" in result.stdout
     assert memory.list_sessions_limits == []
+    assert memory.list_sessions_include_all == []
     assert memory.timeline == ["health"]
 
 
@@ -952,6 +961,7 @@ def test_cli_entrypoint_reports_store_validation_failure(
     assert result.exit_code == 1
     assert "Couldn't validate Redis Agent Memory Store ID" in result.stdout
     assert memory.list_sessions_limits == [1]
+    assert memory.list_sessions_include_all == [True]
     assert memory.timeline == ["health", "list_sessions"]
 
 

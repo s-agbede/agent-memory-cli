@@ -22,5 +22,5 @@ def test_redis_agent_memory_store_is_readable() -> None:
         api_key=settings.redis_agent_memory_api_key.get_secret_value(),
     ) as memory:
         assert memory.health() is not None
-        sessions = memory.list_sessions(limit=1)
+        sessions = memory.list_sessions(limit=1, include_all=True)
         assert isinstance(sessions.items, list)
