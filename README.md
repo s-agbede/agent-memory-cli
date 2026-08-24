@@ -15,11 +15,11 @@ recommendations.
 - Dated future trip plans are checked against saved plans before an overlapping itinerary is generated.
 - OpenAI's built-in `web_search` tool finds current travel information.
 - Web citations appear as inline terminal links and in a clickable source list.
-- `/memories` makes direct and automatically extracted Redis memories visible during the demo.
+- `/memories` and `/why` make direct and automatically learned Redis memories visible during the demo.
 
 The implementation intentionally calls `AgentMemory.add_session_event()`,
-`get_session_memory()`, and `search_long_term_memory()` directly. It does not add an adapter,
-agent framework, custom REST client, MCP integration, or local Docker stack.
+`get_session_memory()`, and `search_long_term_memory()` directly. The OpenAI Responses API uses
+its built-in `web_search` tool for current information.
 
 ## Prerequisites
 
@@ -59,8 +59,11 @@ TRIP_AGENT_USER_ID=traveler
 ```
 
 `OPENAI_MODEL` and `TRIP_AGENT_USER_ID` are optional. The default model is the cost-conscious
-`gpt-5.6-luna`; the default traveler ID supplies the startup prompt's default value. Enter the
-same traveler name after restarting when you want long-term memory to carry across runs.
+`gpt-5.6-luna`; the default traveler ID supplies the startup prompt's default value. The entered
+traveler name is normalized into an Agent Memory `owner_id` (for example, `Maya Chen` becomes
+`maya-chen`). It is a demo scoping key, not authentication, authorization, account creation, or
+a secure identity. Enter the same traveler name after restarting when you want its long-term
+memory to carry across runs.
 
 Do not commit `.env`. It is already ignored by Git.
 
@@ -76,17 +79,19 @@ normal message or one of these commands:
 | Command | Behavior |
 | --- | --- |
 | `/new` | Start a fresh session while retaining the traveler's long-term memories. |
-| `/memories` | Broadly search for known travel plans and preferences. |
-| `/memories food preferences` | Search memories using a custom query. |
+| `/memories` | Semantically search the active owner's known travel plans and preferences. |
+| `/memories food preferences` | Semantically search the active owner's memories using a custom query. |
 | `/why` | Show the long-term memories retrieved for the most recent answer. |
-| `/user Maya` | Switch to Maya with a new session and owner-scoped recall. |
-| `/onboard` | Save the active traveler's explicit profile preferences directly to long-term memory. |
+| `/user Maya` | Normalize Maya as the active `owner_id`, start a fresh session, clear `/why`'s prior receipt, check Maya's direct profile, then welcome a returning owner or automatically begin onboarding for a new one. |
+| `/onboard` | Update the active traveler's explicit profile preferences directly in long-term memory. |
 | `/help` | Show the command reference. |
 | `/exit` | Close the client and leave the agent. |
 
 ## Suggested video flow
 
-1. At startup, enter a traveler name such as `Maya Chen`. The CLI displays a new session UUID.
+1. At startup, enter a traveler name such as `Maya Chen`. The CLI displays a new session UUID,
+   checks for a direct profile, and automatically starts onboarding when none exists. A returning
+   owner is greeted warmly and skips these questions.
 
 2. Accept onboarding and answer the four durable profile questions:
 
@@ -97,9 +102,13 @@ normal message or one of these commands:
    What city do you usually travel from?
    ```
 
-   A short LLM pass turns the answers into concise, fact-preserving profile statements. Those
-   explicit facts are then written directly to owner-scoped long-term memory, so `/memories`
-   can show them immediately. This avoids a cold start.
+   Blank answers are skipped. A short LLM pass turns the remaining answers into concise,
+   fact-preserving profile statements.
+   Those explicit facts are then written directly to owner-scoped long-term memory, so
+   `/memories` can show them immediately. This avoids a cold start. Enter `/cancel` at any
+   question—or use Ctrl+C or EOF—to discard the entire attempt: there is no OpenAI rewrite and
+   no Redis profile write. Running onboarding again updates the answered categories rather than
+   duplicating them.
 
 3. Ask for a current recommendation:
 
@@ -147,6 +156,19 @@ Use direct long-term-memory writes for explicit, trusted facts you already have,
 onboarding profile, imported preferences, or business reference data. Use session events for
 normal conversation and let Redis Agent Memory identify durable information in the background.
 
+`/memories` and `/why` display two independent dimensions for every returned record:
+
+- **Provenance:** `direct` for records deliberately written by the app, or `learned` for records
+  Redis promoted from session history.
+- **Kind:** `semantic fact`, `episodic event`, `retained message`, or a service-defined custom
+  type shown exactly as Redis returns it. Direct profile facts are semantic; dated trip plans are
+  episodic. The app shows Redis-promoted kinds rather than guessing them.
+
+The normal reply path and `/memories` use owner-scoped semantic search with a relevance threshold,
+so they return relevant matches rather than every record. Direct-profile checks and dated-trip-plan
+checks are different: they use owner-scoped filters only, then the app applies the deterministic
+profile or date-overlap rule in code.
+
 Retrieved memory is reference context, not executable instruction. Keep authorization, security,
 and hard safety rules in application code and system instructions rather than relying on memory
 retrieval to enforce them.
@@ -193,8 +215,10 @@ uv run ruff check .
 uv run mypy src
 ```
 
-The normal suite never calls Redis or OpenAI. To make one real Redis Agent Memory health request
-without calling OpenAI:
+The normal suite never calls Redis or OpenAI. The application startup check and the opt-in
+integration test each call `health()` plus read-only `list_sessions(limit=1)`—they create no
+events or memories and do not trigger promotion test data. To run that real Redis check without
+calling OpenAI:
 
 ```bash
 RUN_REDIS_INTEGRATION=1 uv run pytest tests/test_integration.py -v

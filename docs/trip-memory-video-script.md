@@ -14,7 +14,7 @@ That is the difference between a chatbot that answers and an agent that builds c
 
 Before the terminal, show the architecture diagram.
 
-Say: “Every chat request is recorded as a session event. The app loads short-term session context and searches owner-scoped long-term memory. Those are assembled into the model prompt, the model can use web search for current information, and the answer is recorded as another session event. Redis Agent Memory then promotes durable facts asynchronously.”
+Say: “Every chat request is recorded as a session event. The app loads short-term session context and searches owner-scoped long-term memory. Those are assembled into the model prompt, the OpenAI Responses API can use its built-in web search for current information, and the answer is recorded as another session event. Redis Agent Memory then promotes durable facts asynchronously.”
 
 Point to the direct path separately: “Onboarding is different. These are explicit facts we collect deliberately, so we rewrite them into concise profile statements and write them straight to long-term memory.”
 
@@ -22,7 +22,8 @@ Point to the direct path separately: “Onboarding is different. These are expli
 
 ## 0:55 — Start the agent and create Maya’s profile
 
-Launch the application and enter `Maya Chen`. The app creates a new session UUID, then goes straight into four onboarding questions—no confirmation screen.
+Launch the application with a new demo owner, `Maya Chen`. The app creates a new session UUID,
+finds no direct profile, then goes straight into four onboarding questions—no confirmation screen.
 
 ```text
 $ uv run trip-agent
@@ -48,7 +49,16 @@ Trip agent: What city do you usually travel from?
 
 Point out the loading indicator. Say: “The profile answers are explicit, but they are still messy human language. A short LLM pass turns them into concise, fact-preserving memory statements. Then the app writes those statements directly to long-term memory.”
 
-Show `/memories`. The direct labels are the cold-start solution: the agent can use this profile immediately, without waiting for a future chat turn to be promoted.
+Add: “A blank answer is skipped. At any question, `/cancel`, Ctrl+C, or EOF discards the whole
+attempt before the rewrite or any Redis profile write. Repeating onboarding updates the answered
+categories instead of duplicating them.”
+
+Show `/memories`. Explain that each row has two independent labels: provenance (`direct` or
+`learned`) and kind (`semantic fact`, `episodic event`, `retained message`, or a service-defined
+custom type). The direct profile facts are semantic facts; the direct dated trip plans shown later
+are episodic events. Redis-provided kinds are displayed as returned, never guessed. Direct labels
+are the cold-start solution: the agent can use this profile immediately, without waiting for a
+future chat turn to be promoted.
 
 ## 2:20 — Ask for a current recommendation
 
@@ -84,9 +94,14 @@ Add: “Because promotion is asynchronous, a successful session write does not m
 
 Run `/memories` again, optionally narrowing it with `/memories transport preferences`.
 
-Say: “This is a semantic search, filtered to the active traveler’s owner ID. It can show direct onboarding records and memories Redis learned from previous conversations. The `/memories` command returns the most relevant matches, not a raw dump of everything.”
+Say: “This is a semantic search, filtered to the active traveler’s owner ID and a relevance
+threshold. It can show direct onboarding records and memories Redis learned from previous
+conversations. The `/memories` command returns relevant matches, not a raw dump of everything.”
 
-This is a good moment to explain that a username is an owner ID, not a newly-created local account. Reusing `Maya Chen` reuses `maya-chen` and therefore retrieves Maya’s existing server-side long-term memories.
+This is a good moment to explain that a username becomes an owner ID, not a newly-created local
+account. Reusing `Maya Chen` reuses `maya-chen` and therefore scopes this demo to the same
+server-side long-term memories. It is not authentication, authorization, account creation, or a
+secure identity.
 
 ## 5:30 — Restart to prove persistence
 
@@ -116,9 +131,15 @@ Point out that Maya is not asked to repeat her profile. Relevant long-term conte
 /user Alex
 ```
 
-Explain: “Switching users creates a new session and changes the owner filter. Alex sees only Alex’s long-term memories. If Alex is new, `/onboard` can seed a profile in this same terminal.”
+Use a clean new recording name such as `Alex Demo 2026`; the normalized Agent Memory `owner_id`
+becomes `alex-demo-2026`. Show the fresh session ID, then the four onboarding questions starting
+automatically—Alex does not need to type `/onboard` separately.
 
-For a clean recording identity, use a unique name such as `Alex Demo 2026`; the normalized owner ID becomes `alex-demo-2026`.
+Say: “`/user` normalizes the name into the demo’s `owner_id`, starts a fresh session, and clears
+the previous `/why` retrieval receipt. The app then checks for a direct profile. For a new owner
+such as Alex, it begins onboarding automatically; for a returning owner, it warmly says the
+travel profile is available and skips the questions. The owner ID scopes these demo retrievals;
+it is not authentication, authorization, account creation, or secure identity.”
 
 ## 7:00 — Let memory prevent a planning mistake
 
@@ -128,7 +149,11 @@ With Maya’s May trip to Asia already saved, ask:
 You: Plan me a trip to Nigeria for the entire month of May 2027.
 ```
 
-The agent should stop before generating another itinerary and flag the overlap. Explain: “Trip plans are stored in a dedicated owner-scoped memory namespace with normalized start and end dates. Before the agent plans a dated trip, the app compares those dates in code. This is deliberate: memory gives us the context, but date overlap is a product rule we check deterministically.”
+The agent should stop before generating another itinerary and flag the overlap. Explain: “Trip
+plans are stored as direct episodic records in a dedicated owner-scoped memory namespace with
+normalized start and end dates. Before the agent plans a dated trip, the app uses a filter-only
+owner-and-namespace check, then compares those dates in code. This is deliberate: memory gives
+us the context, but date overlap is a product rule we check deterministically.”
 
 ## 7:30 — Show the important code
 
@@ -136,7 +161,8 @@ Keep this compact and use the diagram to orient the viewer:
 
 1. `add_session_event()` records each user and assistant turn.
 2. `get_session_memory()` loads short-term context for the current session.
-3. `search_long_term_memory()` performs semantic retrieval with an `owner_id` filter.
+3. `search_long_term_memory()` performs owner-scoped, relevance-thresholded semantic retrieval;
+   direct profile and trip-plan checks use filter-only requests.
 4. `bulk_create_long_term_memories()` writes the rewritten onboarding facts directly.
 5. `/why` exposes the retrieved records from the latest answer as a transparent retrieval receipt.
 6. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
