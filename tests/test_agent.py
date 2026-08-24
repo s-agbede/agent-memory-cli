@@ -49,6 +49,8 @@ class FakeMemory:
         profile_lookup_error: Exception | None = None,
         profile_write_error: Exception | None = None,
         profile_update_errors: dict[str, Exception] | None = None,
+        missing_profile_read_ids: set[str] | None = None,
+        profile_read_overrides: dict[str, object] | None = None,
         trip_write_result: object | None = None,
         trip_write_error: Exception | None = None,
         trip_plan_lookup_error: Exception | None = None,
@@ -69,6 +71,9 @@ class FakeMemory:
         self.profile_lookup_error = profile_lookup_error
         self.profile_write_error = profile_write_error
         self.profile_update_errors = profile_update_errors or {}
+        self.missing_profile_read_ids = missing_profile_read_ids or set()
+        self.profile_read_overrides = profile_read_overrides or {}
+        self.long_term_by_id: dict[str, object] = {}
         self.trip_write_result = trip_write_result
         self.trip_write_error = trip_write_error
         self.trip_plan_lookup_error = trip_plan_lookup_error
@@ -162,6 +167,10 @@ class FakeMemory:
                 cast(list[str], record["topics"])
             )
         ]
+        for record in created_records:
+            memory_id = str(record["id"])
+            if memory_id not in self.missing_profile_read_ids:
+                self.long_term_by_id[memory_id] = SimpleNamespace(**record)
         return SimpleNamespace(
             created=[str(record["id"]) for record in created_records],
             errors=[
@@ -178,7 +187,23 @@ class FakeMemory:
             raise error
         if kwargs["memory_id"] in self.fail_profile_update_ids:
             raise httpx.ConnectError("Redis is unavailable")
+        memory_id = cast(str, kwargs["memory_id"])
+        if memory_id not in self.missing_profile_read_ids:
+            self.long_term_by_id[memory_id] = SimpleNamespace(
+                id=memory_id,
+                **{key: value for key, value in kwargs.items() if key != "memory_id"},
+            )
         return SimpleNamespace()
+
+    def get_long_term_memory(self, **kwargs: object) -> object:
+        self.timeline.append("memory.get_long_term_memory")
+        self.calls.append(Call("get_long_term_memory", kwargs))
+        memory_id = cast(str, kwargs["memory_id"])
+        if memory_id in self.profile_read_overrides:
+            return self.profile_read_overrides[memory_id]
+        if memory_id in self.missing_profile_read_ids:
+            return SimpleNamespace()
+        return self.long_term_by_id.get(memory_id, SimpleNamespace())
 
 
 class FakeResponses:
@@ -870,6 +895,8 @@ def test_save_profile_looks_up_the_owner_profile_once_with_a_bounded_filter_only
     assert timeline == [
         "memory.search_long_term_memory",
         "memory.bulk_create_long_term_memories",
+        "memory.get_long_term_memory",
+        "memory.get_long_term_memory",
     ]
     assert memory.calls[0].kwargs == {
         "request": {
@@ -942,6 +969,7 @@ def test_save_profile_updates_an_existing_category_using_its_legacy_random_id() 
     assert [call.name for call in memory.calls] == [
         "search_long_term_memory",
         "update_long_term_memory",
+        "get_long_term_memory",
     ]
     assert memory.calls[1].kwargs == {
         "memory_id": "random-legacy-id",
@@ -1097,6 +1125,84 @@ def test_save_profile_counts_unaccounted_bulk_creates_as_failed() -> None:
         updated_categories=(),
         failed_categories=("budget",),
     )
+
+
+def test_save_profile_verifies_acknowledged_creates_and_continues_after_missing_record() -> None:
+    timeline: list[str] = []
+    dietary_id = str(uuid5(NAMESPACE_URL, "profile:sam:dietary"))
+    budget_id = str(uuid5(NAMESPACE_URL, "profile:sam:budget"))
+    memory = FakeMemory(timeline, missing_profile_read_ids={dietary_id})
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate"),
+        )
+    )
+
+    assert result == ProfileSaveResult(
+        created_categories=("budget",),
+        updated_categories=(),
+        failed_categories=("dietary",),
+    )
+    verification_ids = [
+        call.kwargs["memory_id"] for call in memory.calls if call.name == "get_long_term_memory"
+    ]
+    assert verification_ids == [dietary_id, budget_id]
+
+
+def test_save_profile_rejects_acknowledged_create_with_mismatched_stored_fields() -> None:
+    timeline: list[str] = []
+    budget_id = str(uuid5(NAMESPACE_URL, "profile:sam:budget"))
+    memory = FakeMemory(
+        timeline,
+        profile_read_overrides={
+            budget_id: SimpleNamespace(
+                id=budget_id,
+                text="Unexpected budget",
+                owner_id="sam",
+                namespace="profile",
+                memory_type="semantic",
+                topics=["direct", "budget"],
+            )
+        },
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile((ProfileFact(category="budget", text="Moderate"),))
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=(),
+        failed_categories=("budget",),
+    )
+
+
+def test_save_profile_verifies_successful_legacy_id_update() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        missing_profile_read_ids={"legacy-dietary-id"},
+        profile_items=[
+            SimpleNamespace(
+                id="legacy-dietary-id",
+                topics=["direct", "dietary"],
+                updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        ],
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile((ProfileFact(category="dietary", text="Vegetarian"),))
+
+    assert result == ProfileSaveResult(
+        created_categories=(),
+        updated_categories=(),
+        failed_categories=("dietary",),
+    )
+    verification_calls = [call for call in memory.calls if call.name == "get_long_term_memory"]
+    assert [call.kwargs["memory_id"] for call in verification_calls] == ["legacy-dietary-id"]
 
 
 def test_save_profile_does_not_touch_existing_omitted_categories() -> None:

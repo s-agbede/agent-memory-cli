@@ -324,7 +324,10 @@ class TripAgent:
             except MEMORY_EXCEPTIONS:
                 failed_categories.append(fact.category)
             else:
-                updated_categories.append(fact.category)
+                if self._profile_write_is_readable(existing_id, fact):
+                    updated_categories.append(fact.category)
+                else:
+                    failed_categories.append(fact.category)
 
         records: list[CreateMemoryRecordTypedDict] = [
             {
@@ -347,7 +350,12 @@ class TripAgent:
                 created_ids = set(result.created)
                 error_ids = {error.id for error in result.errors or ()}
                 for fact, record in zip(missing_facts, records, strict=True):
-                    if record["id"] in created_ids and record["id"] not in error_ids:
+                    memory_id = record["id"]
+                    if (
+                        memory_id in created_ids
+                        and memory_id not in error_ids
+                        and self._profile_write_is_readable(memory_id, fact)
+                    ):
                         created_categories.append(fact.category)
                     else:
                         failed_categories.append(fact.category)
@@ -379,6 +387,15 @@ class TripAgent:
             "limit": limit,
         }
         return cast(MemoryRequest, request)
+
+    def _profile_write_is_readable(self, memory_id: str, fact: ProfileFact) -> bool:
+        """Confirm one acknowledged profile write through an exact Redis read."""
+
+        try:
+            record = self.memory.get_long_term_memory(memory_id=memory_id)
+        except MEMORY_EXCEPTIONS:
+            return False
+        return _matches_profile_fact(record, memory_id, self.user_id, fact)
 
     def _extract_trip_plan(self, user_text: str) -> TripPlan | None:
         """Extract one concrete future plan, when the traveler supplies an exact date range."""
@@ -510,6 +527,32 @@ def _canonical_profile_text(category: str, value: object) -> str:
     if prefix is None:
         raise ValueError("Unsupported profile category.")
     return f"{prefix}{text}."
+
+
+def _matches_profile_fact(
+    record: object,
+    memory_id: str,
+    owner_id: str,
+    fact: ProfileFact,
+) -> bool:
+    """Return whether an exact Redis read matches the submitted profile fact."""
+
+    topics = getattr(record, "topics", None)
+    valid_topics = (
+        isinstance(topics, Sequence)
+        and not isinstance(topics, (str, bytes))
+        and len(topics) == 2
+        and all(isinstance(topic, str) for topic in topics)
+        and set(topics) == {"direct", fact.category}
+    )
+    return (
+        getattr(record, "id", None) == memory_id
+        and getattr(record, "text", None) == fact.text
+        and getattr(record, "owner_id", None) == owner_id
+        and getattr(record, "namespace", None) == "profile"
+        and getattr(record, "memory_type", None) == "semantic"
+        and valid_topics
+    )
 
 
 def _merge_memory_results(*results: object) -> _MemoryContext:
