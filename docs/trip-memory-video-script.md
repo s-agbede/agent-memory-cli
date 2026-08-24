@@ -169,7 +169,7 @@ Show the new session and welcome: Maya is returning, so onboarding is skipped.
 
 ## 7:20 — Let memory prevent a planning mistake
 
-With Maya’s May trip to Asia already saved, ask:
+With Maya’s May trip to Japan already saved, ask:
 
 ```text
 You: Plan me a trip to Nigeria for the entire month of May 2027.
