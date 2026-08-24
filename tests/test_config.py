@@ -19,7 +19,7 @@ def test_settings_load_required_values_and_defaults(monkeypatch: pytest.MonkeyPa
 
     settings = Settings(_env_file=None)
 
-    assert settings.openai_model == "gpt-5.6-luna"
+    assert settings.openai_model == "gpt-5.5"
     assert settings.trip_agent_user_id == "traveler"
     assert str(settings.redis_agent_memory_endpoint) == "https://memory.example.com/"
 

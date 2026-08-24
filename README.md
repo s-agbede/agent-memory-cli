@@ -53,15 +53,15 @@ Set these values in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=replace-with-your-openai-api-key
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MODEL=gpt-5.5
 REDIS_AGENT_MEMORY_ENDPOINT=https://replace-with-your-agent-memory-endpoint
 REDIS_AGENT_MEMORY_STORE_ID=replace-with-your-store-id
 REDIS_AGENT_MEMORY_API_KEY=replace-with-your-agent-memory-api-key
 TRIP_AGENT_USER_ID=traveler
 ```
 
-`OPENAI_MODEL` and `TRIP_AGENT_USER_ID` are optional. The default model is the cost-conscious
-`gpt-5.6-luna`; the default traveler ID supplies the startup prompt's default value. The entered
+`OPENAI_MODEL` and `TRIP_AGENT_USER_ID` are optional. The default model is `gpt-5.5`; the default
+traveler ID supplies the startup prompt's default value. The entered
 traveler name is normalized into an Agent Memory `owner_id` (for example, `Maya Chen` becomes
 `maya-chen`). It is a demo scoping key, not authentication, authorization, account creation, or
 a secure identity. Enter the same traveler name after restarting when you want its long-term
