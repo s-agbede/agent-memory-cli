@@ -12,8 +12,8 @@ from trip_agent.config import Settings
     os.getenv("RUN_REDIS_INTEGRATION") != "1",
     reason="set RUN_REDIS_INTEGRATION=1 to call Redis Agent Memory",
 )
-def test_redis_agent_memory_health() -> None:
-    """Verify configured credentials can reach Agent Memory without calling OpenAI."""
+def test_redis_agent_memory_store_is_readable() -> None:
+    """Verify the configured Agent Memory store is reachable and readable without writes."""
 
     settings = Settings()
     with AgentMemory(
@@ -22,3 +22,5 @@ def test_redis_agent_memory_health() -> None:
         api_key=settings.redis_agent_memory_api_key.get_secret_value(),
     ) as memory:
         assert memory.health() is not None
+        sessions = memory.list_sessions(limit=1)
+        assert isinstance(sessions.items, list)

@@ -424,7 +424,24 @@ def main() -> None:
             store_id=settings.redis_agent_memory_store_id,
             api_key=settings.redis_agent_memory_api_key.get_secret_value(),
         ) as memory:
-            memory.health()
+            try:
+                memory.health()
+            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
+                console.print(
+                    "[red]Couldn't connect to Redis Agent Memory. Check "
+                    "REDIS_AGENT_MEMORY_ENDPOINT and API connectivity.[/red]"
+                )
+                raise typer.Exit(code=1) from None
+
+            try:
+                memory.list_sessions(limit=1)
+            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
+                console.print(
+                    "[red]Couldn't validate Redis Agent Memory Store ID. Check "
+                    "REDIS_AGENT_MEMORY_STORE_ID and API access.[/red]"
+                )
+                raise typer.Exit(code=1) from None
+
             openai = OpenAI(api_key=settings.openai_api_key.get_secret_value())
             user_id = prompt_for_user_id(console, settings.trip_agent_user_id)
             agent = TripAgent(
@@ -439,10 +456,10 @@ def main() -> None:
                 console,
                 offer_onboarding=True,
             )
-    except (errors.AgentMemoryError, httpx.RequestError):
+    except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
         console.print(
-            "[red]Couldn't connect to Redis Agent Memory. Check the endpoint, store ID, "
-            "and API key.[/red]"
+            "[red]Couldn't connect to Redis Agent Memory. Check "
+            "REDIS_AGENT_MEMORY_ENDPOINT and API connectivity.[/red]"
         )
         raise typer.Exit(code=1) from None
     except OpenAIError:

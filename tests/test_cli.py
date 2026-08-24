@@ -8,6 +8,7 @@ from uuid import UUID
 import httpx
 import pytest
 from openai import OpenAIError
+from redis_agent_memory import errors
 from rich.console import Console
 from typer.testing import CliRunner
 
@@ -802,9 +803,16 @@ def test_repl_displays_answer_before_assistant_memory_warning() -> None:
 class FakeMemoryContext:
     """Context-manager fake for the CLI composition boundary."""
 
-    def __init__(self, health_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        health_error: Exception | None = None,
+        list_sessions_error: Exception | None = None,
+    ) -> None:
         self.health_error = health_error
+        self.list_sessions_error = list_sessions_error
         self.health_called = False
+        self.list_sessions_limits: list[int | None] = []
+        self.timeline: list[str] = []
 
     def __enter__(self) -> "FakeMemoryContext":
         return self
@@ -814,8 +822,16 @@ class FakeMemoryContext:
 
     def health(self) -> object:
         self.health_called = True
+        self.timeline.append("health")
         if self.health_error is not None:
             raise self.health_error
+        return object()
+
+    def list_sessions(self, *, limit: int | None = None) -> object:
+        self.list_sessions_limits.append(limit)
+        self.timeline.append("list_sessions")
+        if self.list_sessions_error is not None:
+            raise self.list_sessions_error
         return object()
 
 
@@ -825,18 +841,31 @@ def test_cli_entrypoint_composes_clients_and_starts_repl(
     memory = FakeMemoryContext()
     started: list[tuple[str, str]] = []
     monkeypatch.setattr(cli, "AgentMemory", lambda *args, **kwargs: memory)
-    monkeypatch.setattr(cli, "OpenAI", lambda *args, **kwargs: object())
-    monkeypatch.setattr(cli, "prompt_for_user_id", lambda console, default: "maya")
+    monkeypatch.setattr(
+        cli,
+        "OpenAI",
+        lambda *args, **kwargs: memory.timeline.append("openai") or object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_user_id",
+        lambda console, default: memory.timeline.append("prompt") or "maya",
+    )
     monkeypatch.setattr(
         cli,
         "run_repl",
-        lambda agent, state, console, **kwargs: started.append((state.user_id, state.session_id)),
+        lambda agent, state, console, **kwargs: (
+            memory.timeline.append("repl"),
+            started.append((state.user_id, state.session_id)),
+        ),
     )
 
     result = CliRunner().invoke(app, env=VALID_ENV)
 
     assert result.exit_code == 0
     assert memory.health_called is True
+    assert memory.list_sessions_limits == [1]
+    assert memory.timeline == ["health", "list_sessions", "openai", "prompt", "repl"]
     assert started and started[0][0] == "maya"
 
 
@@ -856,11 +885,74 @@ def test_cli_entrypoint_reports_redis_health_failure(
 ) -> None:
     memory = FakeMemoryContext(httpx.ConnectError("offline"))
     monkeypatch.setattr(cli, "AgentMemory", lambda *args, **kwargs: memory)
+    monkeypatch.setattr(
+        cli,
+        "OpenAI",
+        lambda *args, **kwargs: memory.timeline.append("openai") or object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_user_id",
+        lambda console, default: memory.timeline.append("prompt") or "maya",
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_repl",
+        lambda *args, **kwargs: memory.timeline.append("repl"),
+    )
 
     result = CliRunner().invoke(app, env=VALID_ENV)
 
     assert result.exit_code == 1
     assert "Couldn't connect to Redis Agent Memory" in result.stdout
+    assert memory.list_sessions_limits == []
+    assert memory.timeline == ["health"]
+
+
+@pytest.mark.parametrize(
+    "list_sessions_error",
+    [
+        errors.AgentMemoryError(
+            "invalid store",
+            httpx.Response(
+                404,
+                request=httpx.Request("GET", "https://memory.example.com"),
+            ),
+            "invalid store",
+        ),
+        errors.NoResponseError(),
+        httpx.ConnectError("offline"),
+    ],
+    ids=["agent-memory-error", "no-response", "request-error"],
+)
+def test_cli_entrypoint_reports_store_validation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    list_sessions_error: Exception,
+) -> None:
+    memory = FakeMemoryContext(list_sessions_error=list_sessions_error)
+    monkeypatch.setattr(cli, "AgentMemory", lambda *args, **kwargs: memory)
+    monkeypatch.setattr(
+        cli,
+        "OpenAI",
+        lambda *args, **kwargs: memory.timeline.append("openai") or object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "prompt_for_user_id",
+        lambda console, default: memory.timeline.append("prompt") or "maya",
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_repl",
+        lambda *args, **kwargs: memory.timeline.append("repl"),
+    )
+
+    result = CliRunner().invoke(app, env=VALID_ENV)
+
+    assert result.exit_code == 1
+    assert "Couldn't validate Redis Agent Memory Store ID" in result.stdout
+    assert memory.list_sessions_limits == [1]
+    assert memory.timeline == ["health", "list_sessions"]
 
 
 def test_cli_entrypoint_reports_openai_initialization_failure(
