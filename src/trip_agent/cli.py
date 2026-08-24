@@ -30,7 +30,7 @@ ONBOARDING_PROMPTS = (
     ("preferences", "What kinds of trips and places do you enjoy?"),
     ("dietary", "What food or dietary needs should I remember?"),
     ("budget", "What budget works for you?"),
-    ("travel-style", "What travel style suits you?"),
+    ("origin", "What city do you usually travel from?"),
 )
 
 app = typer.Typer(

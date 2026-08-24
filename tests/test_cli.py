@@ -120,7 +120,7 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
         "preferences",
         "dietary",
         "budget",
-        "travel-style",
+        "origin",
     ]
     assert "long-term profile" in output.getvalue().lower()
     assert "/memories" in output.getvalue()
@@ -186,7 +186,7 @@ def test_onboarding_skips_blank_answers() -> None:
         read_input=lambda: next(responses),
     )
 
-    assert [fact.category for fact in agent.profile_facts] == ["preferences", "travel-style"]
+    assert [fact.category for fact in agent.profile_facts] == ["preferences", "origin"]
 
 
 def test_user_command_switches_owner_and_starts_new_session() -> None:

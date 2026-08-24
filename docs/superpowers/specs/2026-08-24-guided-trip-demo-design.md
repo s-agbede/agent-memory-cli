@@ -36,7 +36,7 @@ After the greeting, the CLI offers onboarding only for the current first session
 1. What kinds of trips and places do you enjoy?
 2. What food or dietary needs should I remember?
 3. What budget works for you?
-4. What travel style suits you?
+4. What city do you usually travel from?
 
 For every non-empty onboarding answer, the CLI first asks the LLM for a brief, fact-preserving rewrite, then writes an owner-scoped semantic long-term-memory record directly. It displays that the profile fact is ready to recall immediately. It batches the four records where possible and reports per-record failure without exposing credentials. These explicit profile facts solve cold start.
 

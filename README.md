@@ -92,7 +92,7 @@ normal message or one of these commands:
    What kinds of trips and places do you enjoy?
    What food or dietary needs should I remember?
    What budget works for you?
-   What travel style suits you?
+   What city do you usually travel from?
    ```
 
    A short LLM pass turns the answers into concise, fact-preserving profile statements. Those

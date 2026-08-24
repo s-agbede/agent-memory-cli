@@ -96,7 +96,7 @@ What food or dietary needs should I remember?
 What budget works for you?
 > moderate, but I’ll splurge on one great experience
 
-What travel style suits you?
+What city do you usually travel from?
 > relaxed — I don’t want to move hotels every night
 ```
 
