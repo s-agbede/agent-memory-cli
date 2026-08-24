@@ -17,9 +17,10 @@ recommendations.
 - Web citations appear as inline terminal links and in a clickable source list.
 - `/memories` and `/why` make direct and automatically learned Redis memories visible during the demo.
 
-The implementation intentionally calls `AgentMemory.add_session_event()`,
-`get_session_memory()`, and `search_long_term_memory()` directly. The OpenAI Responses API uses
-its built-in `web_search` tool for current information.
+The implementation directly uses the Redis Agent Memory SDK—calling
+`AgentMemory.add_session_event()`, `get_session_memory()`, and `search_long_term_memory()`—with
+Redis Cloud Agent Memory. It adds no adapter, MCP integration, custom search client, or local
+Docker stack. The OpenAI Responses API uses its built-in `web_search` tool for current information.
 
 ## Prerequisites
 
@@ -93,7 +94,7 @@ normal message or one of these commands:
    checks for a direct profile, and automatically starts onboarding when none exists. A returning
    owner is greeted warmly and skips these questions.
 
-2. Accept onboarding and answer the four durable profile questions:
+2. With no confirmation step, answer the four durable profile questions:
 
    ```text
    What kinds of trips and places do you enjoy?
@@ -102,7 +103,8 @@ normal message or one of these commands:
    What city do you usually travel from?
    ```
 
-   Blank answers are skipped. A short LLM pass turns the remaining answers into concise,
+   Blank answers are skipped. If every answer is blank, onboarding ends without an OpenAI rewrite
+   or Redis profile write. Otherwise, a short LLM pass turns the remaining answers into concise,
    fact-preserving profile statements.
    Those explicit facts are then written directly to owner-scoped long-term memory, so
    `/memories` can show them immediately. This avoids a cold start. Enter `/cancel` at any

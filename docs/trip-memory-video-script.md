@@ -49,7 +49,8 @@ Trip agent: What city do you usually travel from?
 
 Point out the loading indicator. Say: “The profile answers are explicit, but they are still messy human language. A short LLM pass turns them into concise, fact-preserving memory statements. Then the app writes those statements directly to long-term memory.”
 
-Add: “A blank answer is skipped. At any question, `/cancel`, Ctrl+C, or EOF discards the whole
+Add: “A blank answer is skipped. If all four answers are blank, onboarding ends without an OpenAI
+rewrite or Redis profile write. At any question, `/cancel`, Ctrl+C, or EOF discards the whole
 attempt before the rewrite or any Redis profile write. Repeating onboarding updates the answered
 categories instead of duplicating them.”
 
@@ -128,7 +129,7 @@ Point out that Maya is not asked to repeat her profile. Relevant long-term conte
 ## 6:40 — Switch travelers
 
 ```text
-/user Alex
+/user Alex Demo 2026
 ```
 
 Use a clean new recording name such as `Alex Demo 2026`; the normalized Agent Memory `owner_id`
@@ -141,7 +142,18 @@ such as Alex, it begins onboarding automatically; for a returning owner, it warm
 travel profile is available and skips the questions. The owner ID scopes these demo retrievals;
 it is not authentication, authorization, account creation, or secure identity.”
 
-## 7:00 — Let memory prevent a planning mistake
+## 7:00 — Switch back to Maya
+
+Before demonstrating Maya’s saved May plan, return to Maya explicitly:
+
+```text
+/user Maya Chen
+```
+
+Show the new session ID and the direct-profile check. Say: “Maya is a returning owner, so the app
+welcomes her back and skips onboarding—there is no need to answer the profile questions again.”
+
+## 7:20 — Let memory prevent a planning mistake
 
 With Maya’s May trip to Asia already saved, ask:
 
@@ -155,7 +167,7 @@ normalized start and end dates. Before the agent plans a dated trip, the app use
 owner-and-namespace check, then compares those dates in code. This is deliberate: memory gives
 us the context, but date overlap is a product rule we check deterministically.”
 
-## 7:30 — Show the important code
+## 7:45 — Show the important code
 
 Keep this compact and use the diagram to orient the viewer:
 
@@ -163,7 +175,8 @@ Keep this compact and use the diagram to orient the viewer:
 2. `get_session_memory()` loads short-term context for the current session.
 3. `search_long_term_memory()` performs owner-scoped, relevance-thresholded semantic retrieval;
    direct profile and trip-plan checks use filter-only requests.
-4. `bulk_create_long_term_memories()` writes the rewritten onboarding facts directly.
+4. Onboarding upserts categories: `update_long_term_memory()` updates existing profile categories,
+   while one `bulk_create_long_term_memories()` call creates the missing categories.
 5. `/why` exposes the retrieved records from the latest answer as a transparent retrieval receipt.
 6. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
 
