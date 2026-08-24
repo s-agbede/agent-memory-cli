@@ -309,6 +309,28 @@ def test_onboarding_reports_created_and_updated_categories_in_submitted_order() 
     assert text.index("dietary", updated_start) < text.index("budget", updated_start)
 
 
+def test_onboarding_reports_partial_success_and_failed_categories_truthfully() -> None:
+    agent = FakeAgent(
+        profile_save_result=ProfileSaveResult(
+            created_categories=("preferences",),
+            updated_categories=(),
+            failed_categories=("dietary",),
+        )
+    )
+    console, output = recording_console()
+    responses = iter(["museums", "vegetarian", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    text = output.getvalue()
+    assert "Saved 1 long-term profile memory" in text
+    assert "1 created: preferences" in text
+    assert "1 profile memory was not saved: dietary" in text
+    assert "Try /onboard again" in text
+    assert "No profile changes were saved" not in text
+    assert "Saved 0" not in text
+
+
 def test_onboarding_reports_an_all_failed_result_without_a_success_claim() -> None:
     agent = FakeAgent(
         profile_save_result=ProfileSaveResult(
