@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: SecretStr
-    openai_model: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-5.5"
     redis_agent_memory_endpoint: AnyHttpUrl
     redis_agent_memory_store_id: str = Field(min_length=1)
     redis_agent_memory_api_key: SecretStr
