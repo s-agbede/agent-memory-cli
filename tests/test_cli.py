@@ -186,20 +186,25 @@ def test_onboarding_cancels_the_entire_attempt_for_an_exact_cancel_answer(
     assert "no profile changes were saved" in output.getvalue().lower()
 
 
-@pytest.mark.parametrize("error", [EOFError(), KeyboardInterrupt()])
-def test_onboarding_input_interruptions_cancel_the_entire_attempt(
-    error: BaseException,
+@pytest.mark.parametrize("error_type", [EOFError, KeyboardInterrupt])
+def test_onboarding_input_interruptions_cancel_after_answers_are_collected(
+    error_type: type[EOFError] | type[KeyboardInterrupt],
 ) -> None:
     agent = FakeAgent()
     console, output = recording_console()
+    answers = iter(["food and museums", "vegetarian"])
 
-    def raise_input_error() -> str:
-        raise error
+    def read_until_interrupted() -> str:
+        try:
+            return next(answers)
+        except StopIteration:
+            raise error_type from None
 
-    run_onboarding(cast(TripAgent, agent), console, read_input=raise_input_error)
+    run_onboarding(cast(TripAgent, agent), console, read_input=read_until_interrupted)
 
     assert agent.rewrite_calls == 0
     assert agent.save_calls == 0
+    assert agent.profile_facts == []
     assert "no profile changes were saved" in output.getvalue().lower()
 
 
@@ -279,16 +284,16 @@ def test_onboarding_reports_update_only_result_as_saved_and_updated() -> None:
     assert "Saved 0" not in text
 
 
-def test_onboarding_reports_created_updated_and_failed_categories_in_submitted_order() -> None:
+def test_onboarding_reports_created_and_updated_categories_in_submitted_order() -> None:
     agent = FakeAgent(
         profile_save_result=ProfileSaveResult(
-            created_categories=("preferences",),
-            updated_categories=("dietary",),
-            failed_categories=("budget",),
+            created_categories=("origin", "preferences"),
+            updated_categories=("budget", "dietary"),
+            failed_categories=(),
         )
     )
     console, output = recording_console()
-    responses = iter(["museums", "vegetarian", "moderate", ""])
+    responses = iter(["museums", "vegetarian", "moderate", "London"])
 
     run_onboarding(
         cast(TripAgent, agent),
@@ -297,10 +302,11 @@ def test_onboarding_reports_created_updated_and_failed_categories_in_submitted_o
     )
 
     text = output.getvalue()
-    assert "Saved 2 long-term profile memories" in text
-    assert "1 created: preferences" in text
-    assert "1 updated: dietary" in text
-    assert "1 profile memory was not saved: budget" in text
+    created_start = text.index("2 created")
+    updated_start = text.index("2 updated")
+    assert "Saved 4 long-term profile memories" in text
+    assert text.index("preferences", created_start) < text.index("origin", created_start)
+    assert text.index("dietary", updated_start) < text.index("budget", updated_start)
 
 
 def test_onboarding_reports_an_all_failed_result_without_a_success_claim() -> None:
