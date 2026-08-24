@@ -4,9 +4,9 @@
 
 ## 0:00 — Hook
 
-Imagine telling a travel agent that you are vegetarian, prefer relaxed trips, and have a moderate budget—then returning tomorrow and having to explain all of it again.
+Imagine telling a travel agent your preferences once, then returning tomorrow without repeating them.
 
-That is the difference between a chatbot that answers and an agent that builds continuity. In this video, I am building a small terminal travel agent with Redis Agent Memory. It remembers an explicit profile immediately, learns useful details from conversation over time, and brings that context into a fresh session.
+This terminal travel agent uses Redis Agent Memory to save an explicit profile immediately, learn from conversation over time, and carry context into a fresh session.
 
 **Show:** A quick before-and-after: generic reply versus a personalized recommendation.
 
@@ -14,11 +14,15 @@ That is the difference between a chatbot that answers and an agent that builds c
 
 Before the terminal, show the architecture diagram.
 
-Say: “Every chat request is recorded as a session event. The app loads short-term session context and searches owner-scoped long-term memory. Those are assembled into the model prompt, the OpenAI Responses API can use its built-in web search for current information, and the answer is recorded as another session event. Redis Agent Memory then promotes durable facts asynchronously.”
+Say: “Every chat request is recorded as a session event. The app loads session context and
+owner-scoped long-term memory, sends both to the model, and records the answer. The OpenAI
+Responses API can use its built-in web search for current information; Redis promotes durable
+facts asynchronously.”
 
 Point to the direct path separately: “Onboarding is different. These are explicit facts we collect deliberately, so we rewrite them into concise profile statements and write them straight to long-term memory.”
 
-**Show:** The request lifecycle diagram: chat request → record user event → load session context + search long-term memory → prompt assembler → LLM/web search → record assistant event → response; dashed asynchronous path → memory promotion → long-term memory.
+**Show:** chat request → session event → session context + long-term search → LLM/web search →
+assistant event; dashed path → memory promotion → long-term memory.
 
 ## 0:55 — Start the agent and create Maya’s profile
 
@@ -35,31 +39,30 @@ Session ID: 8b7d3d9e-1a9c-4a92-a1ef-0a4b0710cb42
 
 Quick travel profile
 Trip agent: What kinds of trips and places do you enjoy?
-> food, museums, local neighborhoods, and easy hikes
+You: food, museums, local neighborhoods, and easy hikes
 
 Trip agent: What food or dietary needs should I remember?
-> vegetarian
+You: vegetarian
 
 Trip agent: What budget works for you?
-> moderate, but I’ll splurge on one great experience
+You: moderate, but I’ll splurge on one great experience
 
 Trip agent: What city do you usually travel from?
-> London
+You: London
 ```
 
-Point out the loading indicator. Say: “The profile answers are explicit, but they are still messy human language. A short LLM pass turns them into concise, fact-preserving memory statements. Then the app writes those statements directly to long-term memory.”
+Say: “A short LLM pass turns these explicit answers into concise, fact-preserving statements,
+then writes them directly to long-term memory.”
 
 Add: “A blank answer is skipped. If all four answers are blank, onboarding ends without an OpenAI
 rewrite or Redis profile write. At any question, `/cancel`, Ctrl+C, or EOF discards the whole
 attempt before the rewrite or any Redis profile write. Repeating onboarding updates the answered
 categories instead of duplicating them.”
 
-Show `/memories`. Explain that each row has two independent labels: provenance (`direct` or
-`learned`) and kind (`semantic fact`, `episodic event`, `retained message`, or a service-defined
-custom type). The direct profile facts are semantic facts; the direct dated trip plans shown later
-are episodic events. Redis-provided kinds are displayed as returned, never guessed. Direct labels
-are the cold-start solution: the agent can use this profile immediately, without waiting for a
-future chat turn to be promoted.
+Show `/memories`. Each row has independent provenance (`direct` or `learned`) and kind
+(`semantic fact`, `episodic event`, `retained message`, or a service-defined custom type). Profile
+facts are direct semantic facts; dated plans are direct episodic events. Redis-provided kinds are
+shown as returned, never guessed. The direct profile solves the cold start.
 
 ## 2:20 — Ask for a current recommendation
 
@@ -67,11 +70,24 @@ future chat turn to be promoted.
 You: I have five days in Lisbon in October. What should I do?
 ```
 
-Point out the “Planning your trip…” indicator, then walk through the answer. It should use Maya’s remembered interests, dietary needs, budget, and departure city. It should also include current web citations.
+Point out the answer’s personalized details and current web citations. Say: “Memory
+personalizes; web search handles time-sensitive facts.”
 
-Say: “Memory personalizes the answer. Web search handles time-sensitive facts such as current opening hours, events, and transport information.”
+Run `/why`: it is the retrieval receipt for this answer, showing the retrieved direct and learned
+records rather than claiming one record mechanically caused every response.
 
-Run `/why` immediately after the answer. Say: “Rather than asking you to trust that memory was used, this shows the exact long-term records retrieved for this answer, including whether each one was an explicit profile fact or something learned from chat.”
+## 2:55 — Save a reproducible dated plan
+
+While Maya is active, record the exact plan that powers the later conflict:
+
+```text
+You: I’m planning a trip to Japan from 2027-05-10 to 2027-05-20.
+```
+
+Explain: “This stores a direct episodic plan server-side under Maya’s owner ID. On a clean store,
+record this step before switching owners so the later Nigeria request has a known overlap.”
+Before recording, rehearse these two dated turns on a clean store to confirm the conflict; the
+captured sequence records the Japan turn here, before the owner switch.
 
 ## 3:20 — Let the agent learn naturally
 
@@ -81,7 +97,8 @@ Add a preference in normal conversation:
 You: For shorter trips, I’d rather take trains than fly when the journey is practical. Please remember that.
 ```
 
-Say: “This is not another direct profile write. The user message and the assistant’s answer are stored as ordered session events right away. Redis Agent Memory evaluates those events in the background and can extract, deduplicate, and consolidate details that matter beyond this trip.”
+Say: “This is not a direct profile write. Both turns are session events; Redis can extract,
+deduplicate, and consolidate durable details in the background.”
 
 **Show:**
 
@@ -89,20 +106,18 @@ Say: “This is not another direct profile write. The user message and the assis
 conversation → session events → asynchronous promotion → long-term memory
 ```
 
-Add: “Because promotion is asynchronous, a successful session write does not mean the new long-term memory appears instantly. For the recording, either use a rehearsed pause or a pre-promoted example.”
+Add: “Promotion is asynchronous, so use a rehearsed pause or a pre-promoted example.”
 
 ## 4:35 — Show what retrieval actually means
 
 Run `/memories` again, optionally narrowing it with `/memories transport preferences`.
 
-Say: “This is a semantic search, filtered to the active traveler’s owner ID and a relevance
-threshold. It can show direct onboarding records and memories Redis learned from previous
-conversations. The `/memories` command returns relevant matches, not a raw dump of everything.”
+Say: “This is owner-scoped semantic search with a relevance threshold: relevant direct and learned
+matches, not a raw dump.”
 
-This is a good moment to explain that a traveler name becomes an owner ID, not a newly-created local
-account. Reusing `Maya Chen` reuses `maya-chen` and therefore scopes this demo to the same
-server-side long-term memories. It is not authentication, authorization, account creation, or a
-secure identity.
+Explain once: “A traveler name becomes an owner ID—`Maya Chen` becomes `maya-chen`. It scopes
+this demo’s server-side retrieval; it is not authentication, authorization, account creation, or
+a secure identity.”
 
 ## 5:30 — Restart to prove persistence
 
@@ -116,7 +131,7 @@ Fresh session started.
 Session ID: 01efdb77-8fb0-46c8-aa1d-9e20d0877ea2
 ```
 
-Say: “The old process is gone and this session UUID is new. Short-term conversation context starts fresh. But Maya’s long-term profile remains because it lives in Redis Agent Memory, not in this terminal process.”
+Say: “The process and session are new, but Maya’s long-term profile remains in Redis Agent Memory.”
 
 Then ask:
 
@@ -124,7 +139,7 @@ Then ask:
 You: I’m choosing between Amsterdam and Copenhagen for a long weekend. Which is a better fit?
 ```
 
-Point out that Maya is not asked to repeat her profile. Relevant long-term context is retrieved, combined with current web results, and used in a cited answer.
+Point out that Maya skips onboarding and receives a cited, personalized answer.
 
 ## 6:40 — Switch travelers
 
@@ -132,15 +147,17 @@ Point out that Maya is not asked to repeat her profile. Relevant long-term conte
 /user Alex Demo 2026
 ```
 
-Use a clean new recording name such as `Alex Demo 2026`; the normalized Agent Memory `owner_id`
-becomes `alex-demo-2026`. Show the fresh session ID, then the four onboarding questions starting
-automatically—Alex does not need to type `/onboard` separately.
+Show the fresh session and automatic onboarding. At the first prompt, enter:
 
-Say: “`/user` normalizes the name into the demo’s `owner_id`, starts a fresh session, and clears
-the previous `/why` retrieval receipt. The app then checks for a direct profile. For a new owner
-such as Alex, it begins onboarding automatically; for a returning owner, it warmly says the
-travel profile is available and skips the questions. The owner ID scopes these demo retrievals;
-it is not authentication, authorization, account creation, or secure identity.”
+```text
+You: /cancel
+Onboarding cancelled. No profile changes were saved.
+```
+
+Say: “`/user` normalizes this to `alex-demo-2026`, starts a fresh session, clears the prior
+`/why` receipt, and checks for a direct profile. Alex is new, so onboarding begins automatically;
+`/cancel` atomically discards it. A returning owner gets the warm profile-available welcome and
+skips questions.”
 
 ## 7:00 — Switch back to Maya
 
@@ -150,8 +167,7 @@ Before demonstrating Maya’s saved May plan, return to Maya explicitly:
 /user Maya Chen
 ```
 
-Show the new session ID and the direct-profile check. Say: “Maya is a returning owner, so the app
-welcomes her back and skips onboarding—there is no need to answer the profile questions again.”
+Show the new session and welcome: Maya is returning, so onboarding is skipped.
 
 ## 7:20 — Let memory prevent a planning mistake
 
@@ -175,19 +191,18 @@ Keep this compact and use the diagram to orient the viewer:
 2. `get_session_memory()` loads short-term context for the current session.
 3. `search_long_term_memory()` performs owner-scoped, relevance-thresholded semantic retrieval;
    direct profile and trip-plan checks use filter-only requests.
-4. Onboarding upserts categories: `update_long_term_memory()` updates existing profile categories,
-   while one `bulk_create_long_term_memories()` call creates the missing categories.
+4. Onboarding upserts: `update_long_term_memory()` updates existing categories; one
+   `bulk_create_long_term_memories()` call creates missing ones.
 5. `/why` exposes the retrieved records from the latest answer as a transparent retrieval receipt.
 6. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
 
-Say: “The key design choice is not to save every line as durable memory. Direct writes are for explicit, trusted facts. Session events preserve the conversation. Background promotion decides what is worth carrying forward.”
+Say: “Direct writes are intentional facts; session events preserve conversation; background
+promotion decides what carries forward.”
 
 ## 8:30 — Close
 
-We built a small terminal travel agent, but the memory pattern generalizes: a coding assistant can retain framework preferences, a support agent can retain customer context, and a learning assistant can remember goals and pace.
-
-Start with direct writes for facts you intentionally collect. Record real conversations as session events. Let durable information be promoted in the background. Then make memory visible and retrievable.
-
-That is how you move from a chatbot that merely responds to an agent that has continuity with a person.
+This pattern generalizes to coding preferences, customer context, and learning goals: use direct
+writes for intentional facts, session events for conversation, background promotion for durable
+details, and visible retrieval for trust.
 
 **Recording notes:** Use live citations returned on the recording day, rehearse automatic-promotion timing, and never enter real secrets, payment details, or booking codes in the demo.
