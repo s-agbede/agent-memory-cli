@@ -148,7 +148,10 @@ def run_onboarding(
     """Collect explicit travel preferences and save them directly to long-term memory."""
 
     console.print("[bold]Quick travel profile[/bold]")
-    console.print("These explicit preferences are saved directly to long-term memory.")
+    console.print(
+        "Your answers are briefly rewritten into clear profile facts, then saved directly "
+        "to long-term memory."
+    )
     reader = read_input or _read_input
     facts: list[ProfileFact] = []
     for category, question in ONBOARDING_PROMPTS:
@@ -162,7 +165,11 @@ def run_onboarding(
         return
 
     try:
-        result = agent.save_profile(tuple(facts))
+        with console.status(
+            "[bold cyan]Creating concise travel memories…[/bold cyan]", spinner="dots"
+        ):
+            rewritten_facts = agent.rewrite_profile(tuple(facts))
+        result = agent.save_profile(rewritten_facts)
     except TripAgentError as error:
         console.print(f"[red]{error}[/red]")
         return
@@ -271,7 +278,9 @@ def run_repl(
             continue
 
         try:
-            show_reply(agent.reply(state.session_id, line), console)
+            with console.status("[bold cyan]Planning your trip…[/bold cyan]", spinner="dots"):
+                reply = agent.reply(state.session_id, line)
+            show_reply(reply, console)
             console.print(
                 "[dim]Saved to session memory. Redis evaluates salient details for "
                 "background promotion.[/dim]"

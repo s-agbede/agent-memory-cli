@@ -74,6 +74,11 @@ class FakeAgent:
         self.profile_facts.extend(facts)
         return ProfileSaveResult(created_count=len(facts), failed_count=0)
 
+    def rewrite_profile(self, facts: tuple[ProfileFact, ...]) -> tuple[ProfileFact, ...]:
+        return tuple(
+            ProfileFact(category=fact.category, text=f"Rewritten: {fact.text}") for fact in facts
+        )
+
     def set_user(self, user_id: str) -> None:
         self.user_id = user_id
 
@@ -119,6 +124,12 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
     ]
     assert "long-term profile" in output.getvalue().lower()
     assert "/memories" in output.getvalue()
+    assert [fact.text for fact in agent.profile_facts] == [
+        "Rewritten: food and museums",
+        "Rewritten: vegetarian",
+        "Rewritten: moderate",
+        "Rewritten: relaxed",
+    ]
 
 
 def test_repl_explains_background_promotion_after_a_chat_turn() -> None:

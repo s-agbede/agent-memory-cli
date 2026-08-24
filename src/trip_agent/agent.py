@@ -1,5 +1,6 @@
 """Direct Redis Agent Memory and OpenAI turn coordination."""
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -144,6 +145,43 @@ class TripAgent:
             for item in result.items
         )
 
+    def rewrite_profile(self, facts: Sequence[ProfileFact]) -> tuple[ProfileFact, ...]:
+        """Turn explicit profile answers into concise, durable memory statements."""
+
+        if not facts:
+            return ()
+
+        categories = [fact.category for fact in facts]
+        try:
+            response = self.openai.responses.create(
+                model=self.model,
+                instructions=(
+                    "Rewrite each explicit travel-profile answer into one brief, standalone "
+                    "fact for long-term memory. Preserve meaning, uncertainty, and every "
+                    "qualification. Do not infer, add, omit, advise, or make any preference "
+                    "stronger. Use third person (for example, 'The traveler prefers...'). "
+                    "Return only a JSON object whose keys are exactly the supplied categories "
+                    "and whose values are the rewritten facts."
+                ),
+                input=json.dumps(
+                    {"answers": [{"category": fact.category, "text": fact.text} for fact in facts]}
+                ),
+            )
+        except OpenAIError as error:
+            raise TripAgentError("I couldn't rewrite your profile answers.") from error
+
+        try:
+            output = json.loads(response.output_text)
+            if not isinstance(output, dict) or set(output) != set(categories):
+                raise ValueError("The response did not contain the expected categories.")
+            rewritten = tuple(
+                ProfileFact(category=fact.category, text=_profile_text(output[fact.category]))
+                for fact in facts
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise TripAgentError("I couldn't rewrite your profile answers.") from error
+        return rewritten
+
     def save_profile(self, facts: Sequence[ProfileFact]) -> ProfileSaveResult:
         """Save explicit onboarding preferences directly to long-term memory."""
 
@@ -196,3 +234,11 @@ class TripAgent:
             )
         except (errors.AgentMemoryError, httpx.RequestError) as error:
             raise TripAgentError(failure_message) from error
+
+
+def _profile_text(value: object) -> str:
+    """Validate one rewritten profile fact from the model response."""
+
+    if not isinstance(value, str) or not (text := value.strip()):
+        raise ValueError("A profile fact must be non-empty text.")
+    return text

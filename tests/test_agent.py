@@ -247,6 +247,43 @@ def test_save_profile_writes_owner_scoped_semantic_records() -> None:
     ]
 
 
+def test_rewrite_profile_turns_answers_into_concise_category_preserving_facts() -> None:
+    timeline: list[str] = []
+    rewritten = (
+        '{"preferences":"The traveler prefers quiet coastal places with nature.",'
+        '"dietary":"The traveler has no strict dietary needs and enjoys chicken."}'
+    )
+    openai = FakeOpenAI(timeline, text=rewritten)
+    agent = make_agent(FakeMemory(timeline), openai)
+
+    facts = agent.rewrite_profile(
+        (
+            ProfileFact(category="preferences", text="I like coastal and quiet places with nature"),
+            ProfileFact(category="dietary", text="No strict needs, but I love chicken"),
+        )
+    )
+
+    assert facts == (
+        ProfileFact(
+            category="preferences", text="The traveler prefers quiet coastal places with nature."
+        ),
+        ProfileFact(
+            category="dietary", text="The traveler has no strict dietary needs and enjoys chicken."
+        ),
+    )
+    assert timeline == ["openai.responses.create"]
+    assert openai.responses.kwargs is not None
+    assert "tools" not in openai.responses.kwargs
+
+
+def test_rewrite_profile_rejects_invalid_model_output() -> None:
+    timeline: list[str] = []
+    agent = make_agent(FakeMemory(timeline), FakeOpenAI(timeline, text="not JSON"))
+
+    with pytest.raises(TripAgentError, match="rewrite your profile answers"):
+        agent.rewrite_profile((ProfileFact(category="budget", text="Moderate"),))
+
+
 def test_save_profile_reports_redis_failure() -> None:
     timeline: list[str] = []
     agent = make_agent(FakeMemory(timeline, fail_profile_write=True), FakeOpenAI(timeline))

@@ -38,7 +38,7 @@ After the greeting, the CLI offers onboarding only for the current first session
 3. What budget works for you?
 4. What travel style suits you?
 
-For every non-empty onboarding answer, the CLI writes an owner-scoped semantic long-term-memory record directly. It displays that the profile fact is ready to recall immediately. It batches the four records where possible and reports per-record failure without exposing credentials. These explicit profile facts solve cold start.
+For every non-empty onboarding answer, the CLI first asks the LLM for a brief, fact-preserving rewrite, then writes an owner-scoped semantic long-term-memory record directly. It displays that the profile fact is ready to recall immediately. It batches the four records where possible and reports per-record failure without exposing credentials. These explicit profile facts solve cold start.
 
 Normal free-form chat retains the existing required order: the user's detail is first stored as a session event, session and owner-scoped long-term context are loaded, an answer is generated, and the assistant response is stored as a session event. The CLI prints that the session event is saved and Redis Agent Memory evaluates it for asynchronous promotion. Redis Agent Memory handles extraction, deduplication, and memory consolidation; the CLI does not poll or implement a competing conflict-resolution rule.
 

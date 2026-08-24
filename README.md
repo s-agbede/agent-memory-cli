@@ -8,7 +8,7 @@ recommendations.
 
 ## What the demo shows
 
-- Direct profile onboarding writes explicit preferences to long-term memory immediately.
+- Direct profile onboarding briefly rewrites explicit preferences into clear facts, then writes them to long-term memory immediately.
 - Each normal user and assistant turn is stored as a Redis Agent Memory session event.
 - Session history and an optional Redis-generated summary reconstruct the current conversation.
 - Owner-scoped long-term memory recalls useful preferences across fresh sessions.
@@ -95,7 +95,8 @@ normal message or one of these commands:
    What travel style suits you?
    ```
 
-   These explicit facts are written directly to owner-scoped long-term memory, so `/memories`
+   A short LLM pass turns the answers into concise, fact-preserving profile statements. Those
+   explicit facts are then written directly to owner-scoped long-term memory, so `/memories`
    can show them immediately. This avoids a cold start.
 
 3. Ask for a current recommendation:
