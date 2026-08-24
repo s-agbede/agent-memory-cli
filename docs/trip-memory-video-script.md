@@ -118,7 +118,17 @@ Explain: “Switching users creates a new session and changes the owner filter. 
 
 For a clean recording identity, use a unique name such as `Alex Demo 2026`; the normalized owner ID becomes `alex-demo-2026`.
 
-## 7:20 — Show the important code
+## 7:00 — Let memory prevent a planning mistake
+
+With Maya’s May trip to Asia already saved, ask:
+
+```text
+You: Plan me a trip to Nigeria for the entire month of May 2027.
+```
+
+The agent should stop before generating another itinerary and flag the overlap. Explain: “Trip plans are stored in a dedicated owner-scoped memory namespace with normalized start and end dates. Before the agent plans a dated trip, the app compares those dates in code. This is deliberate: memory gives us the context, but date overlap is a product rule we check deterministically.”
+
+## 7:30 — Show the important code
 
 Keep this compact and use the diagram to orient the viewer:
 

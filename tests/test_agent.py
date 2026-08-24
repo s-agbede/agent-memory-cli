@@ -35,11 +35,13 @@ class FakeMemory:
         fail_add_number: int | None = None,
         fail_profile_write: bool = False,
         profile_errors: int = 0,
+        trip_plans: list[object] | None = None,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
         self.fail_profile_write = fail_profile_write
         self.profile_errors = profile_errors
+        self.trip_plans = trip_plans or []
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -67,6 +69,11 @@ class FakeMemory:
     def search_long_term_memory(self, **kwargs: object) -> object:
         self.timeline.append("memory.search_long_term_memory")
         self.calls.append(Call("search_long_term_memory", kwargs))
+        request = cast(dict[str, object], kwargs["request"])
+        filter_ = cast(dict[str, object], request.get("filter_", {}))
+        namespace = cast(dict[str, object], filter_.get("namespace", {}))
+        if namespace.get("eq") == "trip-plans":
+            return SimpleNamespace(items=self.trip_plans)
         return SimpleNamespace(
             items=[SimpleNamespace(text="Sam is vegetarian.", memory_type="preference")]
         )
@@ -89,18 +96,23 @@ class FakeResponses:
         timeline: list[str],
         text: str,
         error: OpenAIError | None = None,
+        texts: list[str] | None = None,
     ) -> None:
         self.timeline = timeline
         self.text = text
         self.error = error
+        self.texts = texts or []
         self.kwargs: dict[str, object] | None = None
+        self.calls: list[dict[str, object]] = []
 
     def create(self, **kwargs: object) -> object:
         self.timeline.append("openai.responses.create")
         self.kwargs = kwargs
+        self.calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return SimpleNamespace(output_text=self.text, output=[])
+        text = self.texts.pop(0) if self.texts else self.text
+        return SimpleNamespace(output_text=text, output=[])
 
 
 class FakeOpenAI:
@@ -109,8 +121,9 @@ class FakeOpenAI:
         timeline: list[str],
         text: str = "Kyoto has lovely vegetarian options.",
         error: OpenAIError | None = None,
+        texts: list[str] | None = None,
     ) -> None:
-        self.responses = FakeResponses(timeline, text, error)
+        self.responses = FakeResponses(timeline, text, error, texts)
 
 
 def make_agent(
@@ -174,6 +187,62 @@ def test_failed_assistant_event_preserves_generated_reply() -> None:
 
     assert caught.value.reply.text == "Here is your plan."
     assert timeline[-1] == "memory.add_session_event"
+
+
+def test_reply_flags_a_conflicting_dated_trip_before_generating_an_itinerary() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        trip_plans=[
+            SimpleNamespace(text="[trip-plan] destination=Asia | start=2027-05-01 | end=2027-05-31")
+        ],
+    )
+    openai = FakeOpenAI(
+        timeline,
+        text=(
+            '{"is_trip_plan":true,"destination":"Nigeria",'
+            '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+        ),
+    )
+    agent = make_agent(memory, openai)
+
+    reply = agent.reply(
+        session_id="session-1",
+        user_text="Plan me a trip to Nigeria for the entire month of May 2027.",
+    )
+
+    assert "overlaps" in reply.text
+    assert "Asia" in reply.text
+    assert "Nigeria" in reply.text
+    assert len(openai.responses.calls) == 1
+    assert "tools" not in openai.responses.calls[0]
+    assert "memory.bulk_create_long_term_memories" not in timeline
+
+
+def test_reply_saves_a_non_conflicting_dated_trip_for_future_checks() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    openai = FakeOpenAI(
+        timeline,
+        texts=[
+            (
+                '{"is_trip_plan":true,"destination":"Asia",'
+                '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+            ),
+            "Here is your Asia itinerary.",
+        ],
+    )
+    agent = make_agent(memory, openai)
+
+    reply = agent.reply(
+        session_id="session-1",
+        user_text="Plan me a trip to Asia for the month of May 2027.",
+    )
+
+    records = cast(list[dict[str, object]], memory.calls[-2].kwargs["memories"])
+    assert reply.text == "Here is your Asia itinerary."
+    assert records[0]["namespace"] == "trip-plans"
+    assert records[0]["text"] == "[trip-plan] destination=Asia | start=2027-05-01 | end=2027-05-31"
 
 
 def test_openai_failure_does_not_store_assistant_event() -> None:

@@ -12,6 +12,7 @@ recommendations.
 - Each normal user and assistant turn is stored as a Redis Agent Memory session event.
 - Session history and an optional Redis-generated summary reconstruct the current conversation.
 - Owner-scoped long-term memory recalls useful preferences across fresh sessions.
+- Dated future trip plans are checked against saved plans before an overlapping itinerary is generated.
 - OpenAI's built-in `web_search` tool finds current travel information.
 - Web citations appear as inline terminal links and in a clickable source list.
 - `/memories` makes direct and automatically extracted Redis memories visible during the demo.

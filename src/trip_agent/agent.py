@@ -1,11 +1,12 @@
 """Direct Redis Agent Memory and OpenAI turn coordination."""
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import cast
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
 from openai import OpenAI, OpenAIError
@@ -47,6 +48,28 @@ class ProfileSaveResult:
 
     created_count: int
     failed_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TripPlan:
+    """A dated future trip used for deterministic conflict detection."""
+
+    destination: str
+    start_date: date
+    end_date: date
+
+    def overlaps(self, other: "TripPlan") -> bool:
+        """Return whether this trip shares one or more calendar days with another."""
+
+        return self.start_date <= other.end_date and other.start_date <= self.end_date
+
+    def memory_text(self) -> str:
+        """Serialize a plan into the canonical long-term-memory representation."""
+
+        return (
+            f"[trip-plan] destination={self.destination} | start={self.start_date.isoformat()} "
+            f"| end={self.end_date.isoformat()}"
+        )
 
 
 class TripAgentError(RuntimeError):
@@ -96,6 +119,29 @@ class TripAgent:
             )
         except (errors.AgentMemoryError, httpx.RequestError) as error:
             raise TripAgentError("I couldn't load your Redis Agent Memory context.") from error
+
+        proposed_plan = (
+            self._extract_trip_plan(user_text) if _may_describe_dated_trip(user_text) else None
+        )
+        if proposed_plan is not None:
+            conflicts = tuple(plan for plan in self._trip_plans() if plan.overlaps(proposed_plan))
+            if conflicts:
+                reply = AgentReply(
+                    text=_conflict_message(proposed_plan, conflicts[0]),
+                    citations=(),
+                )
+                try:
+                    self._add_event(
+                        session_id=session_id,
+                        actor_id="trip-agent",
+                        role=models.MessageRole.ASSISTANT,
+                        text=reply.text,
+                        failure_message="I couldn't save the answer to Redis Agent Memory.",
+                    )
+                except TripAgentError as error:
+                    raise AssistantMemoryWarning(reply) from error
+                return reply
+            self._save_trip_plan(proposed_plan)
 
         try:
             response = self.openai.responses.create(
@@ -216,6 +262,96 @@ class TripAgent:
         }
         return cast(MemoryRequest, request)
 
+    def _extract_trip_plan(self, user_text: str) -> TripPlan | None:
+        """Extract one concrete future plan, when the traveler supplies an exact date range."""
+
+        try:
+            response = self.openai.responses.create(
+                model=self.model,
+                instructions=(
+                    "Identify whether the message proposes a future trip with a destination and "
+                    "an unambiguous date range. Today is "
+                    f"{date.today().isoformat()}. Resolve relative dates using that date. Return "
+                    "only JSON. For a dated trip, return exactly: "
+                    '{"is_trip_plan":true,"destination":"...","start_date":"YYYY-MM-DD",'
+                    '"end_date":"YYYY-MM-DD"}. For anything else or an ambiguous range, return '
+                    '{"is_trip_plan":false}. Do not invent missing dates or destinations.'
+                ),
+                input=user_text,
+            )
+        except OpenAIError as error:
+            raise TripAgentError("I couldn't check your trip dates for conflicts.") from error
+
+        try:
+            output = json.loads(response.output_text)
+            if not isinstance(output, dict) or not isinstance(output.get("is_trip_plan"), bool):
+                raise ValueError("Missing trip-plan indicator.")
+            if not output["is_trip_plan"]:
+                return None
+            destination = output.get("destination")
+            start = output.get("start_date")
+            end = output.get("end_date")
+            if not isinstance(destination, str) or not destination.strip():
+                raise ValueError("Missing trip destination.")
+            if not isinstance(start, str) or not start.strip():
+                raise ValueError("Missing trip start date.")
+            if not isinstance(end, str) or not end.strip():
+                raise ValueError("Missing trip end date.")
+            plan = TripPlan(
+                destination=destination.strip(),
+                start_date=date.fromisoformat(start),
+                end_date=date.fromisoformat(end),
+            )
+            if plan.end_date < plan.start_date:
+                raise ValueError("Trip ends before it starts.")
+            return plan
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise TripAgentError("I couldn't check your trip dates for conflicts.") from error
+
+    def _trip_plans(self) -> tuple[TripPlan, ...]:
+        """Load this traveler's canonical future-trip records."""
+
+        request = cast(
+            MemoryRequest,
+            {
+                "filter_": {
+                    "owner_id": {"eq": self.user_id},
+                    "namespace": {"eq": "trip-plans"},
+                },
+                "limit": 100,
+            },
+        )
+        try:
+            result = self.memory.search_long_term_memory(request=request)
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't check your saved trip plans.") from error
+        return tuple(
+            plan
+            for item in result.items
+            if (plan := _trip_plan_from_memory(getattr(item, "text", ""))) is not None
+        )
+
+    def _save_trip_plan(self, plan: TripPlan) -> None:
+        """Persist a non-conflicting future plan for later overlap checks."""
+
+        record: CreateMemoryRecordTypedDict = {
+            "id": str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"{self.user_id}:{plan.destination.casefold()}:{plan.start_date}:{plan.end_date}",
+                )
+            ),
+            "text": plan.memory_text(),
+            "owner_id": self.user_id,
+            "memory_type": "semantic",
+            "namespace": "trip-plans",
+            "topics": ["direct", "trip-plan"],
+        }
+        try:
+            self.memory.bulk_create_long_term_memories(memories=[record])
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't save your future trip plan.") from error
+
     def _add_event(
         self,
         session_id: str,
@@ -242,3 +378,45 @@ def _profile_text(value: object) -> str:
     if not isinstance(value, str) or not (text := value.strip()):
         raise ValueError("A profile fact must be non-empty text.")
     return text
+
+
+def _trip_plan_from_memory(text: object) -> TripPlan | None:
+    """Parse only trip-plan records written by this application."""
+
+    if not isinstance(text, str) or not text.startswith("[trip-plan] destination="):
+        return None
+    try:
+        destination, start, end = text.removeprefix("[trip-plan] destination=").split(" | ")
+        return TripPlan(
+            destination=destination,
+            start_date=date.fromisoformat(start.removeprefix("start=")),
+            end_date=date.fromisoformat(end.removeprefix("end=")),
+        )
+    except ValueError:
+        return None
+
+
+def _may_describe_dated_trip(text: str) -> bool:
+    """Avoid a date-extraction model call when a turn contains no date-like language."""
+
+    return bool(
+        re.search(
+            r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+            r"jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|"
+            r"dec(?:ember)?|20\d{2}|next\s+(?:week|month|year)|this\s+(?:week|month|year))\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _conflict_message(proposed: TripPlan, existing: TripPlan) -> str:
+    """Explain one deterministic dated-trip conflict to the traveler."""
+
+    return (
+        f"Your proposed trip to {proposed.destination} from {proposed.start_date:%b %-d, %Y} "
+        f"to {proposed.end_date:%b %-d, %Y} overlaps your existing trip to "
+        f"{existing.destination} from {existing.start_date:%b %-d, %Y} to "
+        f"{existing.end_date:%b %-d, %Y}. Would you like to change the dates or replace "
+        "the existing trip plan?"
+    )
