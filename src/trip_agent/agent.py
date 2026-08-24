@@ -96,6 +96,7 @@ class AssistantMemoryWarning(RuntimeError):
 
 
 MemoryRequest = models.SearchLongTermMemoryRequestContentTypedDict
+MEMORY_EXCEPTIONS = (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError)
 MEMORY_SIMILARITY_THRESHOLD = 0.7
 PROFILE_CATEGORIES = ("preferences", "dietary", "budget", "origin")
 
@@ -130,7 +131,7 @@ class TripAgent:
             memories = self.memory.search_long_term_memory(
                 request=self._memory_request(user_text, limit=5)
             )
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't load your Redis Agent Memory context.") from error
 
         proposed_plan = (
@@ -201,7 +202,7 @@ class TripAgent:
             result = self.memory.search_long_term_memory(
                 request=self._memory_request(query, limit=limit)
             )
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't search your Redis Agent Memory data.") from error
 
         return _memory_views(result)
@@ -221,7 +222,7 @@ class TripAgent:
         )
         try:
             result = self.memory.search_long_term_memory(request=request)
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't check your saved travel profile.") from error
         return bool(result.items)
 
@@ -277,12 +278,13 @@ class TripAgent:
                 "filter_": {
                     "owner_id": {"eq": self.user_id},
                     "namespace": {"eq": "profile"},
-                }
+                },
+                "limit": 100,
             },
         )
         try:
             profile = self.memory.search_long_term_memory(request=request)
-        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't load your long-term travel profile.") from error
 
         existing_by_category = _latest_profile_record_ids(profile.items)
@@ -303,7 +305,7 @@ class TripAgent:
                     namespace="profile",
                     owner_id=self.user_id,
                 )
-            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
+            except MEMORY_EXCEPTIONS:
                 failed_categories.append(fact.category)
             else:
                 updated_categories.append(fact.category)
@@ -323,7 +325,7 @@ class TripAgent:
         if records:
             try:
                 result = self.memory.bulk_create_long_term_memories(memories=records)
-            except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError):
+            except MEMORY_EXCEPTIONS:
                 failed_categories.extend(fact.category for fact in missing_facts)
             else:
                 created_ids = set(result.created)
@@ -413,7 +415,7 @@ class TripAgent:
         )
         try:
             result = self.memory.search_long_term_memory(request=request)
-        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't check your saved trip plans.") from error
         return tuple(
             plan
@@ -439,7 +441,7 @@ class TripAgent:
         }
         try:
             result = self.memory.bulk_create_long_term_memories(memories=[record])
-        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't save your future trip plan.") from error
         requested_id = record["id"]
         has_matching_error = any(error.id == requested_id for error in result.errors or ())
@@ -462,7 +464,7 @@ class TripAgent:
                 content=[models.Text(text=text)],
                 created_at=datetime.now(UTC),
             )
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except MEMORY_EXCEPTIONS as error:
             raise TripAgentError(failure_message) from error
 
 
@@ -547,7 +549,8 @@ def _memory_source(item: object) -> str:
     topics = getattr(item, "topics", ())
     if isinstance(topics, Sequence) and not isinstance(topics, str) and "direct" in topics:
         return "direct"
-    if getattr(item, "namespace", None) in {"profile", "trip-plans"}:
+    namespace = getattr(item, "namespace", None)
+    if isinstance(namespace, str) and namespace.casefold() in {"profile", "trip-plans"}:
         return "direct"
     return "learned"
 

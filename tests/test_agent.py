@@ -51,6 +51,7 @@ class FakeMemory:
         trip_write_result: object | None = None,
         trip_write_error: Exception | None = None,
         trip_plan_lookup_error: Exception | None = None,
+        add_errors: dict[int, Exception] | None = None,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
@@ -69,6 +70,7 @@ class FakeMemory:
         self.trip_write_result = trip_write_result
         self.trip_write_error = trip_write_error
         self.trip_plan_lookup_error = trip_plan_lookup_error
+        self.add_errors = add_errors or {}
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -76,6 +78,9 @@ class FakeMemory:
         self.timeline.append("memory.add_session_event")
         self.calls.append(Call("add_session_event", kwargs))
         self.add_count += 1
+        error = self.add_errors.get(self.add_count)
+        if error is not None:
+            raise error
         if self.add_count == self.fail_add_number:
             raise httpx.ConnectError("Redis is unavailable")
         return SimpleNamespace(event_id=f"event-{self.add_count}")
@@ -267,6 +272,29 @@ def test_failed_user_event_prevents_openai_call() -> None:
 def test_failed_assistant_event_preserves_generated_reply() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline, fail_add_number=2)
+    agent = make_agent(memory, FakeOpenAI(timeline, text="Here is your plan."))
+
+    with pytest.raises(AssistantMemoryWarning) as caught:
+        agent.reply(session_id="session-1", user_text="Help me plan")
+
+    assert caught.value.reply.text == "Here is your plan."
+    assert timeline[-1] == "memory.add_session_event"
+
+
+def test_no_response_while_storing_user_event_becomes_friendly_agent_error() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, add_errors={1: errors.NoResponseError()})
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="save your message"):
+        agent.reply(session_id="session-1", user_text="Help me plan")
+
+    assert timeline == ["memory.add_session_event"]
+
+
+def test_no_response_while_storing_assistant_event_preserves_generated_reply() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, add_errors={2: errors.NoResponseError()})
     agent = make_agent(memory, FakeOpenAI(timeline, text="Here is your plan."))
 
     with pytest.raises(AssistantMemoryWarning) as caught:
@@ -536,6 +564,24 @@ def test_openai_failure_does_not_store_assistant_event() -> None:
     ]
 
 
+@pytest.mark.parametrize("method_name", ["get_session_memory", "search_long_term_memory"])
+def test_reply_translates_no_response_while_loading_context(method_name: str) -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+
+    def raise_no_response(**kwargs: object) -> object:
+        raise errors.NoResponseError()
+
+    setattr(memory, method_name, raise_no_response)
+    openai = FakeOpenAI(timeline)
+    agent = make_agent(memory, openai)
+
+    with pytest.raises(TripAgentError, match="load your Redis Agent Memory context"):
+        agent.reply(session_id="session-1", user_text="Help me plan")
+
+    assert openai.responses.calls == []
+
+
 def test_search_memories_uses_owner_scoped_semantic_request() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline)
@@ -553,6 +599,20 @@ def test_search_memories_uses_owner_scoped_semantic_request() -> None:
     assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
 
 
+def test_search_memories_translates_no_response() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+
+    def raise_no_response(**kwargs: object) -> object:
+        raise errors.NoResponseError()
+
+    memory.search_long_term_memory = raise_no_response
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="search your Redis Agent Memory data"):
+        agent.search_memories("vegetarian city break")
+
+
 def test_has_profile_checks_only_direct_profile_records_for_the_active_owner() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline, profile_exists=True)
@@ -568,6 +628,15 @@ def test_has_profile_checks_only_direct_profile_records_for_the_active_owner() -
         },
         "limit": 1,
     }
+
+
+def test_has_profile_translates_no_response() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, profile_lookup_error=errors.NoResponseError())
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="check your saved travel profile"):
+        agent.has_profile()
 
 
 def test_search_memories_labels_direct_profile_records() -> None:
@@ -596,6 +665,19 @@ def test_search_memories_preserves_kind_and_derives_provenance_independently() -
                 topics=["direct", "dietary"],
             ),
             SimpleNamespace(text="Future trip", memory_type="episodic", namespace="trip-plans"),
+            SimpleNamespace(text="Legacy profile", memory_type="semantic", namespace="Profile"),
+            SimpleNamespace(text="Legacy trip", memory_type="episodic", namespace="TRIP-PLANS"),
+            SimpleNamespace(
+                text="Tagged malformed namespace",
+                memory_type="semantic",
+                topics=["direct"],
+                namespace=["profile"],
+            ),
+            SimpleNamespace(
+                text="Malformed namespace",
+                memory_type="semantic",
+                namespace=["profile"],
+            ),
             SimpleNamespace(text="Rail travel", memory_type="message", topics=[]),
             SimpleNamespace(text="Custom", memory_type="custom"),
             SimpleNamespace(text="Untyped", memory_type=""),
@@ -609,6 +691,10 @@ def test_search_memories_preserves_kind_and_derives_provenance_independently() -
     assert [(row.memory_type, row.source, row.text) for row in rows] == [
         ("semantic", "direct", "Vegetarian"),
         ("episodic", "direct", "Future trip"),
+        ("semantic", "direct", "Legacy profile"),
+        ("episodic", "direct", "Legacy trip"),
+        ("semantic", "direct", "Tagged malformed namespace"),
+        ("semantic", "learned", "Malformed namespace"),
         ("message", "learned", "Rail travel"),
         ("custom", "learned", "Custom"),
         ("memory", "learned", "Untyped"),
@@ -656,7 +742,7 @@ def test_save_profile_rejects_duplicate_categories_before_redis_io() -> None:
     assert memory.calls == []
 
 
-def test_save_profile_looks_up_the_owner_profile_once_with_filters_only() -> None:
+def test_save_profile_looks_up_the_owner_profile_once_with_a_bounded_filter_only_request() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline)
     agent = make_agent(memory, FakeOpenAI(timeline))
@@ -677,7 +763,8 @@ def test_save_profile_looks_up_the_owner_profile_once_with_filters_only() -> Non
             "filter_": {
                 "owner_id": {"eq": "sam"},
                 "namespace": {"eq": "profile"},
-            }
+            },
+            "limit": 100,
         }
     }
     records = cast(list[dict[str, object]], memory.calls[1].kwargs["memories"])
