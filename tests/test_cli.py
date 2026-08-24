@@ -1,7 +1,9 @@
 """Tests for the interactive CLI behavior."""
 
+from collections.abc import Callable
 from io import StringIO
 from typing import cast
+from uuid import UUID
 
 import httpx
 import pytest
@@ -65,6 +67,7 @@ class FakeAgent:
         self.save_calls = 0
         self.user_id = "sam"
         self.profile_check_users: list[str] = []
+        self.profile_check_hook: Callable[[], None] | None = None
 
     def reply(self, session_id: str, user_text: str) -> AgentReply:
         self.messages.append((session_id, user_text))
@@ -109,6 +112,8 @@ class FakeAgent:
 
     def has_profile(self) -> bool:
         self.profile_check_users.append(self.user_id)
+        if self.profile_check_hook is not None:
+            self.profile_check_hook()
         if self.profile_check_error is not None:
             raise self.profile_check_error
         return self.profile_exists
@@ -521,6 +526,17 @@ def test_user_command_switches_to_new_owner_before_checking_their_profile() -> N
     agent = FakeAgent(profile_exists=True)
     console, output = recording_console()
 
+    def assert_switch_timeline_at_profile_check() -> None:
+        assert state.user_id == "alex"
+        assert state.session_id != "old"
+        assert state.last_retrieved_memories is None
+        assert agent.user_id == "alex"
+        text = output.getvalue()
+        assert "Active traveler: alex" in text
+        assert f"Session ID: {state.session_id}" in text
+
+    agent.profile_check_hook = assert_switch_timeline_at_profile_check
+
     keep_running = handle_command("/user Alex", state, cast(TripAgent, agent), console)
 
     assert keep_running is True
@@ -529,8 +545,11 @@ def test_user_command_switches_to_new_owner_before_checking_their_profile() -> N
     assert state.last_retrieved_memories is None
     assert agent.user_id == "alex"
     assert agent.profile_check_users == ["alex"]
-    assert state.session_id in output.getvalue()
-    assert "profile is available" in output.getvalue().lower()
+    UUID(state.session_id)
+    text = output.getvalue()
+    assert "Active traveler: alex" in text
+    assert f"Session ID: {state.session_id}" in text
+    assert "profile is available" in text.lower()
 
 
 def test_user_command_refreshes_the_session_for_the_same_normalized_owner() -> None:
@@ -594,33 +613,41 @@ def test_user_command_can_cancel_automatic_onboarding_for_a_new_owner() -> None:
     assert "no profile changes were saved" in output.getvalue().lower()
 
 
-def test_user_profile_check_failure_keeps_the_selected_owner_without_onboarding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_user_profile_check_failure_keeps_the_selected_owner_and_allows_manual_onboarding() -> None:
     state = SessionState(session_id="old", user_id="sam")
     state.last_retrieved_memories = (MemoryView(memory_type="semantic", text="Vegetarian"),)
     error = TripAgentError("Profile service said [/red] unavailable.")
     agent = FakeAgent(profile_check_error=error)
     console, output = recording_console()
-    onboarding_started: list[bool] = []
-    monkeypatch.setattr(
-        cli,
-        "run_onboarding",
-        lambda agent, console, read_input=None: onboarding_started.append(True),
-    )
 
-    handle_command("/user Alex", state, cast(TripAgent, agent), console)
+    keep_running = handle_command("/user Alex", state, cast(TripAgent, agent), console)
 
+    assert keep_running is True
     assert state.user_id == "alex"
     assert state.session_id != "old"
     assert state.last_retrieved_memories is None
     assert agent.user_id == "alex"
     assert agent.profile_check_users == ["alex"]
-    assert onboarding_started == []
+    assert agent.rewrite_calls == 0
+    assert agent.save_calls == 0
     text = output.getvalue()
     assert "couldn't check" in text.lower()
     assert "/onboard" in text
     assert "[/red]" in text
+
+    responses = iter(["museums", "vegetarian", "moderate", "London"])
+    keep_running = handle_command(
+        "/onboard",
+        state,
+        cast(TripAgent, agent),
+        console,
+        read_input=lambda: next(responses),
+    )
+
+    assert keep_running is True
+    assert agent.user_id == "alex"
+    assert agent.rewrite_calls == 1
+    assert agent.save_calls == 1
 
 
 @pytest.mark.parametrize(
