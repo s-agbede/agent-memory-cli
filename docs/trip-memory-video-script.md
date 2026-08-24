@@ -72,8 +72,10 @@ shown as returned, never guessed. The direct profile solves the cold start.
 You: I have five days in Lisbon in October. What should I do?
 ```
 
-Point out the answer’s personalized details and current web citations. Say: “Memory
-personalizes; web search handles time-sensitive facts.”
+Point out the answer’s personalized details and current web citations. Say: “The app loads the
+direct profile on every turn, adds relevant learned memories, and web search handles time-sensitive
+facts. So Maya's departure city remains available even when this particular question would not
+semantically match the words in that profile fact.”
 
 Run `/why`: it is the retrieval receipt for this answer, showing the retrieved direct and learned
 records rather than claiming one record mechanically caused every response.
@@ -190,11 +192,14 @@ Keep this compact and use the diagram to orient the viewer:
 
 1. `add_session_event()` records each user and assistant turn.
 2. `get_session_memory()` loads short-term context for the current session.
-3. `search_long_term_memory()` performs owner-scoped, relevance-thresholded semantic retrieval;
-   direct profile and trip-plan checks use filter-only requests.
+3. `search_long_term_memory()` first loads the owner-scoped direct profile with a filter-only
+   request, then performs relevance-thresholded semantic retrieval. The app merges those results,
+   keeps the profile first, and removes duplicate Redis record IDs. Trip-plan checks also use
+   filter-only requests.
 4. Onboarding upserts: `update_long_term_memory()` updates existing categories; one
    `bulk_create_long_term_memories()` call creates missing ones.
-5. `/why` exposes the retrieved records from the latest answer as a transparent retrieval receipt.
+5. `/why` exposes that merged profile-and-recall context from the latest answer as a transparent
+   retrieval receipt.
 6. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
 
 Say: “Direct writes are intentional facts; session events preserve conversation; background

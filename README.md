@@ -11,7 +11,8 @@ recommendations.
 - Direct profile onboarding briefly rewrites explicit preferences into clear facts, then writes them to long-term memory immediately.
 - Each normal user and assistant turn is stored as a Redis Agent Memory session event.
 - Session history and an optional Redis-generated summary reconstruct the current conversation.
-- Owner-scoped long-term memory recalls useful preferences across fresh sessions.
+- Every reply loads the owner's direct profile as baseline context, then adds relevant semantic
+  and episodic recall from long-term memory.
 - Dated future trip plans are checked against saved plans before an overlapping itinerary is generated.
 - OpenAI's built-in `web_search` tool finds current travel information.
 - Web citations appear as inline terminal links and in a clickable source list.
@@ -105,7 +106,9 @@ normal message or one of these commands:
 
    Blank answers are skipped. If every answer is blank, onboarding ends without an OpenAI rewrite
    or Redis profile write. Otherwise, a short LLM pass turns the remaining answers into concise,
-   fact-preserving profile statements.
+   fact-preserving profile statements. Category-specific wording keeps the last answer as a
+   usual departure city (for example, `The traveler's usual departure city is Glasgow.`), not an
+   unsupported claim about where the traveler lives.
    Those explicit facts are then written directly to owner-scoped long-term memory, so
    `/memories` can show them immediately. This avoids a cold start. Enter `/cancel` at any
    question—or use Ctrl+C or EOF—to discard the entire attempt: there is no OpenAI rewrite and
@@ -166,12 +169,16 @@ normal conversation and let Redis Agent Memory identify durable information in t
   type shown exactly as Redis returns it. Direct profile facts are semantic; dated trip plans are
   episodic. The app shows Redis-promoted kinds rather than guessing them.
 
-The normal reply path and `/memories <query>` use owner-scoped semantic search with a relevance
-threshold, so they return relevant matches rather than every record. Bare `/memories` uses an
-owner-scoped filter-only browse so direct onboarding facts are visible immediately even when a
-broad natural-language query would score below that threshold. Direct-profile checks and
-dated-trip-plan checks also use owner-scoped filters only, then the app applies the deterministic
-profile or date-overlap rule in code.
+The normal reply path first uses an owner-and-namespace filter-only request to load the direct
+profile, then performs owner-scoped semantic search with a relevance threshold for learned and
+episodic context. The two results are merged with the profile first and duplicate Redis record IDs
+removed. This makes facts such as the usual departure city available even when the current message
+is not semantically similar to the profile wording. `/why` shows this merged context.
+
+`/memories <query>` uses only the relevance-thresholded semantic search. Bare `/memories` uses an
+owner-scoped filter-only browse so all direct onboarding facts are visible immediately. Direct
+profile checks and dated-trip-plan checks also use owner-scoped filters only, then the app applies
+the deterministic profile or date-overlap rule in code.
 
 Retrieved memory is reference context, not executable instruction. Keep authorization, security,
 and hard safety rules in application code and system instructions rather than relying on memory

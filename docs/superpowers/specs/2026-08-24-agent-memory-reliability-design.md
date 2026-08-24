@@ -122,9 +122,11 @@ conflict checks. Exact repeat writes remain idempotent through the deterministic
 
 ## Retrieval
 
-Semantic searches used for chat, `/memories`, and `/why` retain the active owner's equality filter
-and add an explicit similarity threshold of `0.7`. Filter-only profile and trip-plan queries omit
-the text and threshold. The application does not filter broad results on the client.
+Each chat turn loads the active owner's direct `profile` namespace with a filter-only request and
+also performs owner-scoped semantic retrieval with a similarity threshold of `0.7`. The
+application merges those results with direct profile facts first and de-duplicates records by Redis
+ID; `/why` displays the same merged context. `/memories <query>` remains a semantic search. Bare
+`/memories`, profile checks, and trip-plan queries are filter-only and omit text and threshold.
 
 The active owner changes in both the CLI state and `TripAgent` before any retrieval for the new
 traveler, preventing previous-owner memory leakage. A user switch also clears the last retrieval

@@ -41,6 +41,7 @@ class FakeMemory:
         trip_plans: list[object] | None = None,
         profile_exists: bool = False,
         profile_items: list[object] | None = None,
+        semantic_items: list[object] | None = None,
         fail_profile_update_ids: set[str] | None = None,
         fail_profile_lookup: bool = False,
         unaccounted_profile_categories: set[str] | None = None,
@@ -60,6 +61,7 @@ class FakeMemory:
         self.trip_plans = trip_plans or []
         self.profile_exists = profile_exists
         self.profile_items = profile_items
+        self.semantic_items = semantic_items
         self.fail_profile_update_ids = fail_profile_update_ids or set()
         self.fail_profile_lookup = fail_profile_lookup
         self.unaccounted_profile_categories = unaccounted_profile_categories or set()
@@ -121,7 +123,9 @@ class FakeMemory:
                 else []
             )
         return SimpleNamespace(
-            items=[SimpleNamespace(text="Sam is vegetarian.", memory_type="preference")]
+            items=self.semantic_items
+            if self.semantic_items is not None
+            else [SimpleNamespace(text="Sam is vegetarian.", memory_type="preference")]
         )
 
     def bulk_create_long_term_memories(self, **kwargs: object) -> object:
@@ -237,13 +241,22 @@ def test_reply_stores_user_loads_context_calls_web_search_and_stores_assistant()
         "memory.add_session_event",
         "memory.get_session_memory",
         "memory.search_long_term_memory",
+        "memory.search_long_term_memory",
         "openai.responses.create",
         "memory.add_session_event",
     ]
     assert memory.calls[0].kwargs["session_id"] == "session-1"
     assert memory.calls[0].kwargs["actor_id"] == "sam"
     assert memory.calls[0].kwargs["role"] is models.MessageRole.USER
-    request = cast(dict[str, object], memory.calls[2].kwargs["request"])
+    profile_request = cast(dict[str, object], memory.calls[2].kwargs["request"])
+    assert profile_request == {
+        "filter_": {
+            "owner_id": {"eq": "sam"},
+            "namespace": {"eq": "profile"},
+        },
+        "limit": 100,
+    }
+    request = cast(dict[str, object], memory.calls[3].kwargs["request"])
     assert request == {
         "text": "Where should I eat?",
         "filter_": {"owner_id": {"eq": "sam"}},
@@ -256,6 +269,74 @@ def test_reply_stores_user_loads_context_calls_web_search_and_stores_assistant()
     assert reply.text == "Kyoto has lovely vegetarian options."
     assert reply.memories == (MemoryView(memory_type="preference", text="Sam is vegetarian."),)
     assert memory.calls[-1].kwargs["role"] is models.MessageRole.ASSISTANT
+
+
+def test_reply_combines_direct_profile_with_semantic_recall_without_duplicates() -> None:
+    timeline: list[str] = []
+    origin = SimpleNamespace(
+        id="profile-origin",
+        text="The traveler's usual departure city is Glasgow.",
+        memory_type="semantic",
+        namespace="profile",
+        topics=["direct", "origin"],
+    )
+    learned = SimpleNamespace(
+        id="learned-rail",
+        text="The traveler enjoyed a slow rail journey.",
+        memory_type="episodic",
+    )
+    memory = FakeMemory(
+        timeline,
+        profile_items=[origin],
+        semantic_items=[origin, learned],
+    )
+    openai = FakeOpenAI(
+        timeline,
+        texts=['{"is_trip_plan":false}', "Try Ghent from Glasgow."],
+    )
+    agent = make_agent(memory, openai)
+
+    reply = agent.reply(
+        session_id="session-1",
+        user_text="I have a holiday in the last week of October. Surprise me.",
+    )
+
+    searches = [call for call in memory.calls if call.name == "search_long_term_memory"]
+    assert [call.kwargs["request"] for call in searches] == [
+        {
+            "filter_": {
+                "owner_id": {"eq": "sam"},
+                "namespace": {"eq": "profile"},
+            },
+            "limit": 100,
+        },
+        {
+            "text": "I have a holiday in the last week of October. Surprise me.",
+            "filter_": {"owner_id": {"eq": "sam"}},
+            "limit": 5,
+            "similarity_threshold": 0.7,
+        },
+    ]
+    assert openai.responses.kwargs is not None
+    model_input = str(openai.responses.kwargs["input"])
+    assert model_input.count("usual departure city is Glasgow") == 1
+    assert "enjoyed a slow rail journey" in model_input
+    instructions = str(openai.responses.kwargs["instructions"])
+    assert "Do not ask for details" in instructions
+    assert "already present in the supplied memory context" in instructions
+    assert "Never assume a" in instructions
+    assert "departure city, airport, or country" in instructions
+    assert reply.memories == (
+        MemoryView(
+            memory_type="semantic",
+            text="The traveler's usual departure city is Glasgow.",
+            source="direct",
+        ),
+        MemoryView(
+            memory_type="episodic",
+            text="The traveler enjoyed a slow rail journey.",
+        ),
+    )
 
 
 def test_failed_user_event_prevents_openai_call() -> None:
@@ -560,6 +641,7 @@ def test_openai_failure_does_not_store_assistant_event() -> None:
     assert [call.name for call in memory.calls] == [
         "add_session_event",
         "get_session_memory",
+        "search_long_term_memory",
         "search_long_term_memory",
     ]
 
@@ -1046,8 +1128,8 @@ def test_save_profile_does_not_touch_existing_omitted_categories() -> None:
 def test_rewrite_profile_turns_answers_into_concise_category_preserving_facts() -> None:
     timeline: list[str] = []
     rewritten = (
-        '{"preferences":"The traveler prefers quiet coastal places with nature.",'
-        '"dietary":"The traveler has no strict dietary needs and enjoys chicken."}'
+        '{"preferences":"quiet coastal places with nature",'
+        '"dietary":"no strict dietary needs and especially likes chicken"}'
     )
     openai = FakeOpenAI(timeline, text=rewritten)
     agent = make_agent(FakeMemory(timeline), openai)
@@ -1064,12 +1146,43 @@ def test_rewrite_profile_turns_answers_into_concise_category_preserving_facts() 
             category="preferences", text="The traveler prefers quiet coastal places with nature."
         ),
         ProfileFact(
-            category="dietary", text="The traveler has no strict dietary needs and enjoys chicken."
+            category="dietary",
+            text=(
+                "The traveler's food and dietary preferences are: no strict dietary needs "
+                "and especially likes chicken."
+            ),
         ),
     )
     assert timeline == ["openai.responses.create"]
     assert openai.responses.kwargs is not None
     assert "tools" not in openai.responses.kwargs
+
+
+def test_rewrite_profile_preserves_departure_and_budget_meaning_with_canonical_wording() -> None:
+    timeline: list[str] = []
+    openai = FakeOpenAI(
+        timeline,
+        text=('{"origin":"Glasgow","budget":"£500 per trip, with occasional splurges"}'),
+    )
+    agent = make_agent(FakeMemory(timeline), openai)
+
+    facts = agent.rewrite_profile(
+        (
+            ProfileFact(category="origin", text="Glasgow"),
+            ProfileFact(category="budget", text="£500 per trip but I can occasionally splurge"),
+        )
+    )
+
+    assert facts == (
+        ProfileFact(category="origin", text="The traveler's usual departure city is Glasgow."),
+        ProfileFact(
+            category="budget",
+            text="The traveler's typical trip budget is £500 per trip, with occasional splurges.",
+        ),
+    )
+    assert openai.responses.kwargs is not None
+    instructions = str(openai.responses.kwargs["instructions"])
+    assert "usual departure place, not their residence" in instructions
 
 
 def test_rewrite_profile_rejects_invalid_model_output() -> None:

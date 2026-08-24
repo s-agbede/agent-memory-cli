@@ -53,6 +53,13 @@ class ProfileSaveResult:
 
 
 @dataclass(frozen=True, slots=True)
+class _MemoryContext:
+    """Combined Redis records supplied to one model turn."""
+
+    items: tuple[object, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TripPlan:
     """A dated future trip used for deterministic conflict detection."""
 
@@ -99,6 +106,12 @@ MemoryRequest = models.SearchLongTermMemoryRequestContentTypedDict
 MEMORY_EXCEPTIONS = (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError)
 MEMORY_SIMILARITY_THRESHOLD = 0.7
 PROFILE_CATEGORIES = ("preferences", "dietary", "budget", "origin")
+PROFILE_FACT_PREFIXES = {
+    "preferences": "The traveler prefers ",
+    "dietary": "The traveler's food and dietary preferences are: ",
+    "budget": "The traveler's typical trip budget is ",
+    "origin": "The traveler's usual departure city is ",
+}
 
 
 class TripAgent:
@@ -128,9 +141,11 @@ class TripAgent:
 
         try:
             session = self.memory.get_session_memory(session_id=session_id)
-            memories = self.memory.search_long_term_memory(
+            profile = self.memory.search_long_term_memory(request=self._profile_request(limit=100))
+            recalled = self.memory.search_long_term_memory(
                 request=self._memory_request(user_text, limit=5)
             )
+            memories = _merge_memory_results(profile, recalled)
         except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't load your Redis Agent Memory context.") from error
 
@@ -227,18 +242,8 @@ class TripAgent:
     def has_profile(self) -> bool:
         """Return whether this traveler has at least one direct onboarding record."""
 
-        request = cast(
-            MemoryRequest,
-            {
-                "filter_": {
-                    "owner_id": {"eq": self.user_id},
-                    "namespace": {"eq": "profile"},
-                },
-                "limit": 1,
-            },
-        )
         try:
-            result = self.memory.search_long_term_memory(request=request)
+            result = self.memory.search_long_term_memory(request=self._profile_request(limit=1))
         except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't check your saved travel profile.") from error
         return bool(result.items)
@@ -254,12 +259,13 @@ class TripAgent:
             response = self.openai.responses.create(
                 model=self.model,
                 instructions=(
-                    "Rewrite each explicit travel-profile answer into one brief, standalone "
-                    "fact for long-term memory. Preserve meaning, uncertainty, and every "
-                    "qualification. Do not infer, add, omit, advise, or make any preference "
-                    "stronger. Use third person (for example, 'The traveler prefers...'). "
+                    "Normalize each explicit travel-profile answer into one concise value phrase. "
+                    "Preserve meaning, uncertainty, and every qualification. Do not infer, add, "
+                    "omit, advise, or make any preference stronger. For origin, preserve the "
+                    "traveler's usual departure place, not their residence, birthplace, or "
+                    "nationality. Do not include 'The traveler' or a category label in a value. "
                     "Return only a JSON object whose keys are exactly the supplied categories "
-                    "and whose values are the rewritten facts."
+                    "and whose values are the normalized value phrases."
                 ),
                 input=json.dumps(
                     {"answers": [{"category": fact.category, "text": fact.text} for fact in facts]}
@@ -273,7 +279,10 @@ class TripAgent:
             if not isinstance(output, dict) or set(output) != set(categories):
                 raise ValueError("The response did not contain the expected categories.")
             rewritten = tuple(
-                ProfileFact(category=fact.category, text=_profile_text(output[fact.category]))
+                ProfileFact(
+                    category=fact.category,
+                    text=_canonical_profile_text(fact.category, output[fact.category]),
+                )
                 for fact in facts
             )
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -289,18 +298,8 @@ class TripAgent:
             )
         _validate_profile_facts(facts)
 
-        request = cast(
-            MemoryRequest,
-            {
-                "filter_": {
-                    "owner_id": {"eq": self.user_id},
-                    "namespace": {"eq": "profile"},
-                },
-                "limit": 100,
-            },
-        )
         try:
-            profile = self.memory.search_long_term_memory(request=request)
+            profile = self.memory.search_long_term_memory(request=self._profile_request(limit=100))
         except MEMORY_EXCEPTIONS as error:
             raise TripAgentError("I couldn't load your long-term travel profile.") from error
 
@@ -368,6 +367,16 @@ class TripAgent:
             "filter_": {"owner_id": {"eq": self.user_id}},
             "limit": limit,
             "similarity_threshold": MEMORY_SIMILARITY_THRESHOLD,
+        }
+        return cast(MemoryRequest, request)
+
+    def _profile_request(self, limit: int) -> MemoryRequest:
+        request = {
+            "filter_": {
+                "owner_id": {"eq": self.user_id},
+                "namespace": {"eq": "profile"},
+            },
+            "limit": limit,
         }
         return cast(MemoryRequest, request)
 
@@ -491,6 +500,32 @@ def _profile_text(value: object) -> str:
     if not isinstance(value, str) or not (text := value.strip()):
         raise ValueError("A profile fact must be non-empty text.")
     return text
+
+
+def _canonical_profile_text(category: str, value: object) -> str:
+    """Wrap a normalized value in wording that preserves its category semantics."""
+
+    text = _profile_text(value).removesuffix(".")
+    prefix = PROFILE_FACT_PREFIXES.get(category)
+    if prefix is None:
+        raise ValueError("Unsupported profile category.")
+    return f"{prefix}{text}."
+
+
+def _merge_memory_results(*results: object) -> _MemoryContext:
+    """Combine Redis results in priority order and remove repeated record IDs."""
+
+    items: list[object] = []
+    seen_ids: set[str] = set()
+    for result in results:
+        for item in getattr(result, "items", ()):
+            memory_id = getattr(item, "id", None)
+            if isinstance(memory_id, str) and memory_id:
+                if memory_id in seen_ids:
+                    continue
+                seen_ids.add(memory_id)
+            items.append(item)
+    return _MemoryContext(items=tuple(items))
 
 
 def _profile_category(item: object) -> str | None:
