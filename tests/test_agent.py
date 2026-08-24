@@ -50,6 +50,7 @@ class FakeMemory:
         profile_update_errors: dict[str, Exception] | None = None,
         trip_write_result: object | None = None,
         trip_write_error: Exception | None = None,
+        trip_plan_lookup_error: Exception | None = None,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
@@ -67,6 +68,7 @@ class FakeMemory:
         self.profile_update_errors = profile_update_errors or {}
         self.trip_write_result = trip_write_result
         self.trip_write_error = trip_write_error
+        self.trip_plan_lookup_error = trip_plan_lookup_error
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -98,6 +100,8 @@ class FakeMemory:
         filter_ = cast(dict[str, object], request.get("filter_", {}))
         namespace = cast(dict[str, object], filter_.get("namespace", {}))
         if namespace.get("eq") == "trip-plans":
+            if self.trip_plan_lookup_error is not None:
+                raise self.trip_plan_lookup_error
             return SimpleNamespace(items=self.trip_plans)
         if namespace.get("eq") == "profile":
             if self.profile_lookup_error is not None:
@@ -317,6 +321,61 @@ def test_reply_flags_a_conflicting_dated_trip_before_generating_an_itinerary() -
         },
         "limit": 100,
     }
+
+
+def test_reply_treats_an_exact_existing_trip_plan_as_an_idempotent_retry() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(
+        timeline,
+        trip_plans=[
+            SimpleNamespace(text="[trip-plan] destination=asia | start=2027-05-01 | end=2027-05-31")
+        ],
+    )
+    openai = FakeOpenAI(
+        timeline,
+        texts=[
+            (
+                '{"is_trip_plan":true,"destination":"Asia",'
+                '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+            ),
+            "Here is your Asia itinerary.",
+        ],
+    )
+    agent = make_agent(memory, openai)
+
+    reply = agent.reply(
+        session_id="session-1",
+        user_text="Plan me a trip to Asia for the month of May 2027.",
+    )
+
+    assert reply.text == "Here is your Asia itinerary."
+    assert len(openai.responses.calls) == 2
+    assert openai.responses.calls[1]["tools"] == [{"type": "web_search"}]
+    assert "memory.bulk_create_long_term_memories" not in timeline
+    assert memory.add_count == 2
+
+
+def test_reply_translates_no_response_while_loading_saved_trip_plans() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, trip_plan_lookup_error=errors.NoResponseError())
+    openai = FakeOpenAI(
+        timeline,
+        text=(
+            '{"is_trip_plan":true,"destination":"Asia",'
+            '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+        ),
+    )
+    agent = make_agent(memory, openai)
+
+    with pytest.raises(TripAgentError, match="check your saved trip plans"):
+        agent.reply(
+            session_id="session-1",
+            user_text="Plan me a trip to Asia for the month of May 2027.",
+        )
+
+    assert len(openai.responses.calls) == 1
+    assert timeline[-1] == "memory.search_long_term_memory"
+    assert memory.add_count == 1
 
 
 def test_reply_saves_a_non_conflicting_dated_trip_for_future_checks() -> None:

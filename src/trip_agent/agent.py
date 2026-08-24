@@ -65,6 +65,15 @@ class TripPlan:
 
         return self.start_date <= other.end_date and other.start_date <= self.end_date
 
+    def matches(self, other: "TripPlan") -> bool:
+        """Return whether this plan has the deterministic direct-memory identity of another."""
+
+        return (
+            self.destination.casefold() == other.destination.casefold()
+            and self.start_date == other.start_date
+            and self.end_date == other.end_date
+        )
+
     def memory_text(self) -> str:
         """Serialize a plan into the canonical long-term-memory representation."""
 
@@ -128,7 +137,13 @@ class TripAgent:
             self._extract_trip_plan(user_text) if _may_describe_dated_trip(user_text) else None
         )
         if proposed_plan is not None:
-            conflicts = tuple(plan for plan in self._trip_plans() if plan.overlaps(proposed_plan))
+            existing_plans = self._trip_plans()
+            matches = tuple(plan for plan in existing_plans if plan.matches(proposed_plan))
+            conflicts = tuple(
+                plan
+                for plan in existing_plans
+                if not plan.matches(proposed_plan) and plan.overlaps(proposed_plan)
+            )
             if conflicts:
                 reply = AgentReply(
                     text=_conflict_message(proposed_plan, conflicts[0]),
@@ -146,7 +161,8 @@ class TripAgent:
                 except TripAgentError as error:
                     raise AssistantMemoryWarning(reply) from error
                 return reply
-            self._save_trip_plan(proposed_plan)
+            if not matches:
+                self._save_trip_plan(proposed_plan)
 
         try:
             response = self.openai.responses.create(
@@ -397,7 +413,7 @@ class TripAgent:
         )
         try:
             result = self.memory.search_long_term_memory(request=request)
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
             raise TripAgentError("I couldn't check your saved trip plans.") from error
         return tuple(
             plan
