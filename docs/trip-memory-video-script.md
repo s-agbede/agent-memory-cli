@@ -86,8 +86,6 @@ You: I’m planning a trip to Japan from 2027-05-10 to 2027-05-20.
 
 Explain: “This stores a direct episodic plan server-side under Maya’s owner ID. On a clean store,
 record this step before switching owners so the later Nigeria request has a known overlap.”
-Before recording, rehearse these two dated turns on a clean store to confirm the conflict; the
-captured sequence records the Japan turn here, before the owner switch.
 
 ## 3:20 — Let the agent learn naturally
 
@@ -106,7 +104,7 @@ deduplicate, and consolidate durable details in the background.”
 conversation → session events → asynchronous promotion → long-term memory
 ```
 
-Add: “Promotion is asynchronous, so use a rehearsed pause or a pre-promoted example.”
+Add: “Promotion is asynchronous, so leave a pause in the recording if needed.”
 
 ## 4:35 — Show what retrieval actually means
 
@@ -205,4 +203,5 @@ This pattern generalizes to coding preferences, customer context, and learning g
 writes for intentional facts, session events for conversation, background promotion for durable
 details, and visible retrieval for trust.
 
-**Recording notes:** Use live citations returned on the recording day, rehearse automatic-promotion timing, and never enter real secrets, payment details, or booking codes in the demo.
+**Recording notes:** Use live citations returned on the recording day, leave a pause for automatic
+promotion if needed, and never enter real secrets, payment details, or booking codes in the demo.

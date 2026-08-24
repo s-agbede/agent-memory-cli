@@ -134,7 +134,7 @@ normal message or one of these commands:
    salient facts in the background; it is eventually consistent, so do not expect the new memory
    to appear immediately.
 
-5. After a rehearsed pause or edit, run:
+5. After a brief pause, run:
 
    ```text
    /memories
