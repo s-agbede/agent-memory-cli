@@ -99,7 +99,7 @@ Say: “This is a semantic search, filtered to the active traveler’s owner ID 
 threshold. It can show direct onboarding records and memories Redis learned from previous
 conversations. The `/memories` command returns relevant matches, not a raw dump of everything.”
 
-This is a good moment to explain that a username becomes an owner ID, not a newly-created local
+This is a good moment to explain that a traveler name becomes an owner ID, not a newly-created local
 account. Reusing `Maya Chen` reuses `maya-chen` and therefore scopes this demo to the same
 server-side long-term memories. It is not authentication, authorization, account creation, or a
 secure identity.
@@ -184,7 +184,7 @@ Say: “The key design choice is not to save every line as durable memory. Direc
 
 ## 8:30 — Close
 
-We built a small terminal travel agent, but the memory pattern generalizes: a coding assistant can retain framework preferences, a support agent can retain account context, and a learning assistant can remember goals and pace.
+We built a small terminal travel agent, but the memory pattern generalizes: a coding assistant can retain framework preferences, a support agent can retain customer context, and a learning assistant can remember goals and pace.
 
 Start with direct writes for facts you intentionally collect. Record real conversations as session events. Let durable information be promoted in the background. Then make memory visible and retrievable.
 
