@@ -142,3 +142,16 @@ def test_render_reply_renders_model_markdown_instead_of_displaying_syntax() -> N
     assert "**" not in output.getvalue()
     assert "Kyoto highlights" in output.getvalue()
     assert "Nishiki Market" in output.getvalue()
+
+
+def test_render_reply_removes_parentheses_wrapped_around_markdown_link_labels() -> None:
+    rendered, _ = render_reply(
+        "See [(flightsfrom.com)](https://www.flightsfrom.com/GLA-RAK?utm_source=openai)",
+        (),
+    )
+
+    assert (
+        "[flightsfrom.com](https://www.flightsfrom.com/GLA-RAK?utm_source=openai)"
+        in rendered.markup
+    )
+    assert "[(flightsfrom.com)]" not in rendered.markup

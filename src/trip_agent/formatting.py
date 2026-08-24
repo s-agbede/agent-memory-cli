@@ -1,5 +1,6 @@
 """Convert memory context and OpenAI citations into displayable values."""
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -164,6 +165,7 @@ def render_reply(text: str, citations: Sequence[Citation]) -> tuple[Markdown, tu
         if start != end:
             label = text[start:end]
             rendered_text = f"{rendered_text[:start]}[{label}]({citation.url}){rendered_text[end:]}"
+    rendered_text = re.sub(r"\[\(([^\[\]]+)\)\]\(([^\s()]+)\)", r"[\1](\2)", rendered_text)
 
     sources: list[Text] = []
     seen_urls: set[str] = set()
