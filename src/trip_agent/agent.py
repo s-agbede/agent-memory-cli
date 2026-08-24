@@ -417,14 +417,18 @@ class TripAgent:
             ),
             "text": plan.memory_text(),
             "owner_id": self.user_id,
-            "memory_type": "semantic",
+            "memory_type": "episodic",
             "namespace": "trip-plans",
             "topics": ["direct", "trip-plan"],
         }
         try:
-            self.memory.bulk_create_long_term_memories(memories=[record])
-        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            result = self.memory.bulk_create_long_term_memories(memories=[record])
+        except (errors.AgentMemoryError, errors.NoResponseError, httpx.RequestError) as error:
             raise TripAgentError("I couldn't save your future trip plan.") from error
+        requested_id = record["id"]
+        has_matching_error = any(error.id == requested_id for error in result.errors or ())
+        if requested_id not in result.created or has_matching_error:
+            raise TripAgentError("I couldn't save your future trip plan.")
 
     def _add_event(
         self,

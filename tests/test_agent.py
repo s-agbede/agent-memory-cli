@@ -48,6 +48,8 @@ class FakeMemory:
         profile_lookup_error: Exception | None = None,
         profile_write_error: Exception | None = None,
         profile_update_errors: dict[str, Exception] | None = None,
+        trip_write_result: object | None = None,
+        trip_write_error: Exception | None = None,
     ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
@@ -63,6 +65,8 @@ class FakeMemory:
         self.profile_lookup_error = profile_lookup_error
         self.profile_write_error = profile_write_error
         self.profile_update_errors = profile_update_errors or {}
+        self.trip_write_result = trip_write_result
+        self.trip_write_error = trip_write_error
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -114,11 +118,19 @@ class FakeMemory:
     def bulk_create_long_term_memories(self, **kwargs: object) -> object:
         self.timeline.append("memory.bulk_create_long_term_memories")
         self.calls.append(Call("bulk_create_long_term_memories", kwargs))
+        records = cast(list[dict[str, object]], kwargs["memories"])
+        if any("trip-plan" in cast(list[str], record["topics"]) for record in records):
+            if self.trip_write_error is not None:
+                raise self.trip_write_error
+            if self.trip_write_result is not None:
+                return self.trip_write_result
+            return models.BulkCreateLongTermMemoriesResponseContent(
+                created=[str(record["id"]) for record in records]
+            )
         if self.profile_write_error is not None:
             raise self.profile_write_error
         if self.fail_profile_write:
             raise httpx.ConnectError("Redis is unavailable")
-        records = cast(list[dict[str, object]], kwargs["memories"])
         error_records = (
             [
                 record
@@ -329,8 +341,125 @@ def test_reply_saves_a_non_conflicting_dated_trip_for_future_checks() -> None:
 
     records = cast(list[dict[str, object]], memory.calls[-2].kwargs["memories"])
     assert reply.text == "Here is your Asia itinerary."
+    assert records[0]["id"] == str(uuid5(NAMESPACE_URL, "sam:asia:2027-05-01:2027-05-31"))
+    assert records[0]["owner_id"] == "sam"
+    assert records[0]["memory_type"] == "episodic"
     assert records[0]["namespace"] == "trip-plans"
+    assert records[0]["topics"] == ["direct", "trip-plan"]
     assert records[0]["text"] == "[trip-plan] destination=Asia | start=2027-05-01 | end=2027-05-31"
+
+
+def test_reply_stops_before_itinerary_when_trip_plan_bulk_result_reports_matching_error() -> None:
+    timeline: list[str] = []
+    memory_id = str(uuid5(NAMESPACE_URL, "sam:asia:2027-05-01:2027-05-31"))
+    memory = FakeMemory(
+        timeline,
+        trip_write_result=models.BulkCreateLongTermMemoriesResponseContent(
+            created=[memory_id],
+            errors=[models.BulkOperationError(id=memory_id, error="duplicate write failure")],
+        ),
+    )
+    openai = FakeOpenAI(
+        timeline,
+        texts=[
+            (
+                '{"is_trip_plan":true,"destination":"Asia",'
+                '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+            ),
+            "This itinerary must not be generated.",
+        ],
+    )
+    agent = make_agent(memory, openai)
+
+    with pytest.raises(TripAgentError, match="save your future trip plan"):
+        agent.reply(
+            session_id="session-1",
+            user_text="Plan me a trip to Asia for the month of May 2027.",
+        )
+
+    assert len(openai.responses.calls) == 1
+    assert timeline[-1] == "memory.bulk_create_long_term_memories"
+    assert memory.add_count == 1
+
+
+@pytest.mark.parametrize(
+    "trip_write_result",
+    [
+        models.BulkCreateLongTermMemoriesResponseContent(created=[]),
+        models.BulkCreateLongTermMemoriesResponseContent(created=["another-memory-id"], errors=[]),
+    ],
+)
+def test_reply_stops_before_itinerary_when_trip_plan_bulk_result_does_not_account_for_write(
+    trip_write_result: models.BulkCreateLongTermMemoriesResponseContent,
+) -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, trip_write_result=trip_write_result)
+    openai = FakeOpenAI(
+        timeline,
+        texts=[
+            (
+                '{"is_trip_plan":true,"destination":"Asia",'
+                '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+            ),
+            "This itinerary must not be generated.",
+        ],
+    )
+    agent = make_agent(memory, openai)
+
+    with pytest.raises(TripAgentError, match="save your future trip plan"):
+        agent.reply(
+            session_id="session-1",
+            user_text="Plan me a trip to Asia for the month of May 2027.",
+        )
+
+    assert len(openai.responses.calls) == 1
+    assert timeline[-1] == "memory.bulk_create_long_term_memories"
+    assert memory.add_count == 1
+
+
+@pytest.mark.parametrize(
+    "trip_write_error",
+    [
+        errors.AgentMemoryError(
+            "Redis rejected the write",
+            httpx.Response(
+                500,
+                request=httpx.Request("POST", "https://redis.example/memories"),
+            ),
+        ),
+        errors.NoResponseError(),
+        httpx.ConnectError(
+            "Redis is unavailable",
+            request=httpx.Request("POST", "https://redis.example/memories"),
+        ),
+    ],
+)
+def test_reply_stops_before_itinerary_when_trip_plan_write_request_fails(
+    trip_write_error: Exception,
+) -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline, trip_write_error=trip_write_error)
+    openai = FakeOpenAI(
+        timeline,
+        texts=[
+            (
+                '{"is_trip_plan":true,"destination":"Asia",'
+                '"start_date":"2027-05-01","end_date":"2027-05-31"}'
+            ),
+            "This itinerary must not be generated.",
+        ],
+    )
+    agent = make_agent(memory, openai)
+
+    with pytest.raises(TripAgentError, match="save your future trip plan"):
+        agent.reply(
+            session_id="session-1",
+            user_text="Plan me a trip to Asia for the month of May 2027.",
+        )
+
+    assert len(openai.responses.calls) == 1
+    assert timeline[-1] == "memory.bulk_create_long_term_memories"
+    assert memory.add_count == 1
 
 
 def test_openai_failure_does_not_store_assistant_event() -> None:
