@@ -52,3 +52,12 @@ def test_settings_reject_blank_values(
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_settings_reject_http_agent_memory_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    for variable, value in REQUIRED.items():
+        monkeypatch.setenv(variable, value)
+    monkeypatch.setenv("REDIS_AGENT_MEMORY_ENDPOINT", "http://memory.example.com")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

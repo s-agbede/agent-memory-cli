@@ -9,7 +9,13 @@ import pytest
 from openai import OpenAI, OpenAIError
 from redis_agent_memory import AgentMemory, models
 
-from trip_agent.agent import AssistantMemoryWarning, TripAgent, TripAgentError
+from trip_agent.agent import (
+    AssistantMemoryWarning,
+    ProfileFact,
+    ProfileSaveResult,
+    TripAgent,
+    TripAgentError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,9 +29,17 @@ class Call:
 class FakeMemory:
     """Small stateful fake shaped like the Redis Agent Memory SDK."""
 
-    def __init__(self, timeline: list[str], fail_add_number: int | None = None) -> None:
+    def __init__(
+        self,
+        timeline: list[str],
+        fail_add_number: int | None = None,
+        fail_profile_write: bool = False,
+        profile_errors: int = 0,
+    ) -> None:
         self.timeline = timeline
         self.fail_add_number = fail_add_number
+        self.fail_profile_write = fail_profile_write
+        self.profile_errors = profile_errors
         self.add_count = 0
         self.calls: list[Call] = []
 
@@ -55,6 +69,17 @@ class FakeMemory:
         self.calls.append(Call("search_long_term_memory", kwargs))
         return SimpleNamespace(
             items=[SimpleNamespace(text="Sam is vegetarian.", memory_type="preference")]
+        )
+
+    def bulk_create_long_term_memories(self, **kwargs: object) -> object:
+        self.timeline.append("memory.bulk_create_long_term_memories")
+        self.calls.append(Call("bulk_create_long_term_memories", kwargs))
+        if self.fail_profile_write:
+            raise httpx.ConnectError("Redis is unavailable")
+        records = cast(list[dict[str, object]], kwargs["memories"])
+        return SimpleNamespace(
+            created=[str(record["id"]) for record in records[self.profile_errors :]],
+            errors=[SimpleNamespace() for _ in range(self.profile_errors)],
         )
 
 
@@ -180,3 +205,65 @@ def test_search_memories_is_owner_scoped_and_normalized() -> None:
         "limit": 10,
     }
     assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
+
+
+def test_search_memories_labels_direct_profile_records() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    memory.search_long_term_memory = lambda **kwargs: SimpleNamespace(
+        items=[
+            SimpleNamespace(text="Sam is vegetarian.", memory_type="semantic", namespace="profile")
+        ]
+    )
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    rows = agent.search_memories("food preferences")
+
+    assert [(row.source, row.text) for row in rows] == [("direct", "Sam is vegetarian.")]
+
+
+def test_save_profile_writes_owner_scoped_semantic_records() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate budget"),
+        )
+    )
+
+    assert timeline == ["memory.bulk_create_long_term_memories"]
+    records = cast(list[dict[str, object]], memory.calls[0].kwargs["memories"])
+    assert result == ProfileSaveResult(created_count=2, failed_count=0)
+    assert [record["text"] for record in records] == ["Vegetarian", "Moderate budget"]
+    assert all(record["owner_id"] == "sam" for record in records)
+    assert all(record["memory_type"] == "semantic" for record in records)
+    assert all(record["namespace"] == "profile" for record in records)
+    assert [record["topics"] for record in records] == [
+        ["direct", "dietary"],
+        ["direct", "budget"],
+    ]
+
+
+def test_save_profile_reports_redis_failure() -> None:
+    timeline: list[str] = []
+    agent = make_agent(FakeMemory(timeline, fail_profile_write=True), FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="long-term travel profile"):
+        agent.save_profile((ProfileFact(category="dietary", text="Vegetarian"),))
+
+
+def test_save_profile_reports_partial_bulk_failure() -> None:
+    timeline: list[str] = []
+    agent = make_agent(FakeMemory(timeline, profile_errors=1), FakeOpenAI(timeline))
+
+    result = agent.save_profile(
+        (
+            ProfileFact(category="dietary", text="Vegetarian"),
+            ProfileFact(category="budget", text="Moderate budget"),
+        )
+    )
+
+    assert result == ProfileSaveResult(created_count=1, failed_count=1)

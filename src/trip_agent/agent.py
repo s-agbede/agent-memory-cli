@@ -1,12 +1,15 @@
 """Direct Redis Agent Memory and OpenAI turn coordination."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
+from uuid import uuid4
 
 import httpx
 from openai import OpenAI, OpenAIError
 from redis_agent_memory import AgentMemory, errors, models
+from redis_agent_memory.models.creatememoryrecord import CreateMemoryRecordTypedDict
 
 from trip_agent.formatting import Citation, build_model_input, extract_citations
 from trip_agent.prompt import SYSTEM_PROMPT
@@ -26,6 +29,23 @@ class MemoryView:
 
     memory_type: str
     text: str
+    source: str = "learned"
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileFact:
+    """One explicit traveler preference collected during onboarding."""
+
+    category: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileSaveResult:
+    """Outcome of a bulk direct-memory onboarding write."""
+
+    created_count: int
+    failed_count: int
 
 
 class TripAgentError(RuntimeError):
@@ -50,6 +70,11 @@ class TripAgent:
         self.memory = memory
         self.openai = openai
         self.model = model
+        self.user_id = user_id
+
+    def set_user(self, user_id: str) -> None:
+        """Use the existing SDK clients for a different active traveler."""
+
         self.user_id = user_id
 
     def reply(self, session_id: str, user_text: str) -> AgentReply:
@@ -111,8 +136,38 @@ class TripAgent:
             raise TripAgentError("I couldn't search your Redis Agent Memory data.") from error
 
         return tuple(
-            MemoryView(memory_type=item.memory_type or "memory", text=item.text)
+            MemoryView(
+                memory_type=item.memory_type or "memory",
+                text=item.text,
+                source="direct" if getattr(item, "namespace", None) == "profile" else "learned",
+            )
             for item in result.items
+        )
+
+    def save_profile(self, facts: Sequence[ProfileFact]) -> ProfileSaveResult:
+        """Save explicit onboarding preferences directly to long-term memory."""
+
+        if not facts:
+            return ProfileSaveResult(created_count=0, failed_count=0)
+
+        records: list[CreateMemoryRecordTypedDict] = [
+            {
+                "id": str(uuid4()),
+                "text": fact.text,
+                "owner_id": self.user_id,
+                "memory_type": "semantic",
+                "namespace": "profile",
+                "topics": ["direct", fact.category],
+            }
+            for fact in facts
+        ]
+        try:
+            result = self.memory.bulk_create_long_term_memories(memories=records)
+        except (errors.AgentMemoryError, httpx.RequestError) as error:
+            raise TripAgentError("I couldn't save your long-term travel profile.") from error
+        return ProfileSaveResult(
+            created_count=len(result.created),
+            failed_count=len(result.errors or ()),
         )
 
     def _memory_request(self, text: str, limit: int) -> MemoryRequest:

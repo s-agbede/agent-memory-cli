@@ -30,6 +30,15 @@ class Settings(BaseSettings):
             raise ValueError("must not be blank")
         return stripped
 
+    @field_validator("redis_agent_memory_endpoint")
+    @classmethod
+    def require_https_endpoint(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        """Require TLS for the Agent Memory service endpoint."""
+
+        if value.scheme != "https":
+            raise ValueError("must use https")
+        return value
+
     @field_validator("openai_api_key", "redis_agent_memory_api_key")
     @classmethod
     def validate_non_blank_secret(cls, value: SecretStr) -> SecretStr:

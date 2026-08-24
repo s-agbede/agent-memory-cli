@@ -8,12 +8,13 @@ recommendations.
 
 ## What the demo shows
 
-- Each user and assistant turn is stored as a Redis Agent Memory session event.
+- Direct profile onboarding writes explicit preferences to long-term memory immediately.
+- Each normal user and assistant turn is stored as a Redis Agent Memory session event.
 - Session history and an optional Redis-generated summary reconstruct the current conversation.
 - Owner-scoped long-term memory recalls useful preferences across fresh sessions.
 - OpenAI's built-in `web_search` tool finds current travel information.
 - Web citations appear as inline terminal links and in a clickable source list.
-- `/memories` makes extracted Redis memories visible during the demo.
+- `/memories` makes direct and automatically extracted Redis memories visible during the demo.
 
 The implementation intentionally calls `AgentMemory.add_session_event()`,
 `get_session_memory()`, and `search_long_term_memory()` directly. It does not add an adapter,
@@ -57,8 +58,8 @@ TRIP_AGENT_USER_ID=traveler
 ```
 
 `OPENAI_MODEL` and `TRIP_AGENT_USER_ID` are optional. The default model is the cost-conscious
-`gpt-5.6-luna`; the default traveler ID is `traveler`. Use a stable traveler ID when you want
-long-term memory to carry across runs.
+`gpt-5.6-luna`; the default traveler ID supplies the startup prompt's default value. Enter the
+same traveler name after restarting when you want long-term memory to carry across runs.
 
 Do not commit `.env`. It is already ignored by Git.
 
@@ -76,19 +77,28 @@ normal message or one of these commands:
 | `/new` | Start a fresh session while retaining the traveler's long-term memories. |
 | `/memories` | Broadly search for known travel plans and preferences. |
 | `/memories food preferences` | Search memories using a custom query. |
+| `/user Maya` | Switch to Maya with a new session and owner-scoped recall. |
+| `/onboard` | Save the active traveler's explicit profile preferences directly to long-term memory. |
 | `/help` | Show the command reference. |
 | `/exit` | Close the client and leave the agent. |
 
 ## Suggested video flow
 
-1. Start with explicit durable details:
+1. At startup, enter a traveler name such as `Maya Chen`. The CLI displays a new session UUID.
+
+2. Accept onboarding and answer the four durable profile questions:
 
    ```text
-   I'm visiting Tokyo and Kyoto next month. I'm vegetarian, love spicy food,
-   prefer neighborhoods over tourist hotspots, and aim to spend about £40 per meal.
+   What kinds of trips and places do you enjoy?
+   What food or dietary needs should I remember?
+   What budget works for you?
+   What travel style suits you?
    ```
 
-2. Ask for current recommendations:
+   These explicit facts are written directly to owner-scoped long-term memory, so `/memories`
+   can show them immediately. This avoids a cold start.
+
+3. Ask for a current recommendation:
 
    ```text
    Where should I eat in Kyoto, and which places are currently open on Sundays?
@@ -96,26 +106,43 @@ normal message or one of these commands:
 
    Point out the OpenAI web-search citations in the answer.
 
-3. Allow time for Redis Agent Memory's asynchronous extraction cadence, then run:
+4. Add a preference naturally in chat:
+
+   ```text
+   For shorter trips, I prefer trains when the journey is practical. Please remember that.
+   ```
+
+   This turn is saved as session memory. Redis Agent Memory extracts, deduplicates, and promotes
+   salient facts in the background; it is eventually consistent, so do not expect the new memory
+   to appear immediately.
+
+5. After a rehearsed pause or edit, run:
 
    ```text
    /memories
    ```
 
-4. Start a new conversation:
-
-   ```text
-   /new
-   ```
-
-5. Ask a question that depends on durable preferences:
+6. Exit the application and run `uv run trip-agent` again. Enter the same traveler name, point
+   out the different session UUID, then ask a question that depends on durable preferences:
 
    ```text
    Can you suggest a different city break that fits what you know about me?
    ```
 
 New long-term memories may not appear immediately because extraction runs asynchronously.
-Session summarization is also handled by Redis Agent Memory in the background.
+Session summarization is also handled by Redis Agent Memory in the background. `/new` remains a
+quick way to create another session in one process; restarting is the clearest video proof that
+only server-side long-term memory persisted.
+
+## Direct writes and automatic learning
+
+Use direct long-term-memory writes for explicit, trusted facts you already have, such as an
+onboarding profile, imported preferences, or business reference data. Use session events for
+normal conversation and let Redis Agent Memory identify durable information in the background.
+
+Retrieved memory is reference context, not executable instruction. Keep authorization, security,
+and hard safety rules in application code and system instructions rather than relying on memory
+retrieval to enforce them.
 
 ## Optional `trip_preference` memory type
 
