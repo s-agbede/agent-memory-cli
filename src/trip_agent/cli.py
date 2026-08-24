@@ -92,7 +92,6 @@ def show_session_started(state: SessionState, console: Console) -> None:
     session = Text("Session ID: ")
     session.append(state.session_id, style="cyan")
     console.print(session)
-    console.print("Your long-term memories are still available for this traveler.")
 
 
 def show_help(console: Console) -> None:
@@ -256,9 +255,7 @@ def run_repl(
     console.print("Type [cyan]/help[/cyan] to see the available commands.")
 
     if offer_onboarding:
-        console.print("Save a travel profile directly to long-term memory? [Y/n]")
-        if read_input().strip().casefold() not in {"n", "no"}:
-            run_onboarding(agent, console, read_input)
+        run_onboarding(agent, console, read_input)
 
     while True:
         try:

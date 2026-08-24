@@ -149,6 +149,32 @@ def test_repl_explains_background_promotion_after_a_chat_turn() -> None:
     assert "promotion" in output.getvalue().lower()
 
 
+def test_first_run_starts_onboarding_without_a_confirmation_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = SessionState(session_id="session", user_id="sam")
+    console, output = recording_console()
+    onboarding_started: list[bool] = []
+    monkeypatch.setattr(
+        cli,
+        "run_onboarding",
+        lambda agent, console, read_input=None: onboarding_started.append(True),
+    )
+
+    run_repl(
+        cast(TripAgent, FakeAgent()),
+        state,
+        console,
+        read_input=lambda: "/exit",
+        offer_onboarding=True,
+    )
+
+    text = output.getvalue()
+    assert onboarding_started == [True]
+    assert "Save a travel profile" not in text
+    assert "long-term memories are still available" not in text
+
+
 def test_onboarding_skips_blank_answers() -> None:
     agent = FakeAgent()
     console, _ = recording_console()
