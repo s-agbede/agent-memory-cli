@@ -183,6 +183,7 @@ def run_onboarding(
         "Your answers are briefly rewritten into clear profile facts, then saved directly "
         "to long-term memory."
     )
+    console.print("Enter [cyan]/cancel[/cyan] at any question to stop without saving changes.")
     reader = read_input or _read_input
     facts: list[ProfileFact] = []
     for category, question in ONBOARDING_PROMPTS:
@@ -208,14 +209,14 @@ def run_onboarding(
         ):
             rewritten_facts = agent.rewrite_profile(tuple(facts))
     except TripAgentError as error:
-        console.print(f"[red]{error}[/red]")
+        console.print(Text(str(error), style="red"))
         console.print("[yellow]No profile changes were saved. Try /onboard again.[/yellow]")
         return
 
     try:
         result = agent.save_profile(rewritten_facts)
     except TripAgentError as error:
-        console.print(f"[red]{error}[/red]")
+        console.print(Text(str(error), style="red"))
         console.print("[yellow]The profile save did not finish. Try /onboard again.[/yellow]")
         return
 

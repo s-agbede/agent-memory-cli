@@ -162,6 +162,17 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
     ]
 
 
+def test_onboarding_intro_explains_how_to_cancel_without_saving() -> None:
+    agent = FakeAgent()
+    console, output = recording_console()
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: "/cancel")
+
+    text = output.getvalue().lower()
+    assert "/cancel" in text
+    assert "without saving" in text
+
+
 @pytest.mark.parametrize(
     "responses",
     [
@@ -247,6 +258,18 @@ def test_onboarding_does_not_save_when_rewrite_fails_and_invites_retry() -> None
     assert "saved 1" not in output.getvalue().lower()
 
 
+def test_onboarding_renders_rewrite_errors_with_markup_as_plain_text() -> None:
+    error_message = "I couldn't rewrite [/red] your profile answers."
+    agent = FakeAgent(rewrite_error=TripAgentError(error_message))
+    console, output = recording_console()
+    responses = iter(["food and museums", "", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert error_message in output.getvalue()
+    assert "Try /onboard again" in output.getvalue()
+
+
 def test_onboarding_reports_save_failure_without_claiming_success() -> None:
     agent = FakeAgent(save_error=TripAgentError("I couldn't save your profile."))
     console, output = recording_console()
@@ -259,6 +282,18 @@ def test_onboarding_reports_save_failure_without_claiming_success() -> None:
     assert "couldn't save" in output.getvalue().lower()
     assert "try /onboard again" in output.getvalue().lower()
     assert "saved 1" not in output.getvalue().lower()
+
+
+def test_onboarding_renders_save_errors_with_markup_as_plain_text() -> None:
+    error_message = "I couldn't save [/red] your profile."
+    agent = FakeAgent(save_error=TripAgentError(error_message))
+    console, output = recording_console()
+    responses = iter(["food and museums", "", "", ""])
+
+    run_onboarding(cast(TripAgent, agent), console, read_input=lambda: next(responses))
+
+    assert error_message in output.getvalue()
+    assert "Try /onboard again" in output.getvalue()
 
 
 def test_onboarding_reports_update_only_result_as_saved_and_updated() -> None:
