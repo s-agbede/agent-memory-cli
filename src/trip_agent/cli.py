@@ -46,6 +46,7 @@ class SessionState:
 
     session_id: str
     user_id: str
+    last_retrieved_memories: tuple[MemoryView, ...] | None = None
 
     @classmethod
     def new(cls, user_id: str) -> "SessionState":
@@ -57,6 +58,7 @@ class SessionState:
         """Replace only the session identity."""
 
         self.session_id = str(uuid4())
+        self.last_retrieved_memories = None
 
     def switch_user(self, user_id: str) -> None:
         """Change travelers and start a fresh session for that traveler."""
@@ -100,6 +102,7 @@ def show_help(console: Console) -> None:
     console.print("[bold]Commands[/bold]")
     console.print("  [cyan]/new[/cyan]                 Start a fresh conversation")
     console.print("  [cyan]/memories [query][/cyan]  View relevant long-term memories")
+    console.print("  [cyan]/why[/cyan]                 Show memories retrieved for the last answer")
     console.print("  [cyan]/user <name>[/cyan]         Switch to another traveler")
     console.print("  [cyan]/onboard[/cyan]             Save travel preferences directly")
     console.print("  [cyan]/help[/cyan]                Show these commands")
@@ -117,6 +120,25 @@ def show_memories(memories: Sequence[MemoryView], console: Console) -> None:
         return
 
     console.print("[bold magenta]Long-term memories[/bold magenta]")
+    _show_memory_rows(memories, console)
+
+
+def show_why(memories: tuple[MemoryView, ...] | None, console: Console) -> None:
+    """Show the long-term context retrieved for the most recent answer in this session."""
+
+    if memories is None:
+        console.print("[yellow]Ask a travel question first, then try /why.[/yellow]")
+        return
+    console.print("[bold magenta]Memories retrieved for your last answer[/bold magenta]")
+    if not memories:
+        console.print("[yellow]No long-term memories were retrieved for that answer.[/yellow]")
+        return
+    _show_memory_rows(memories, console)
+
+
+def _show_memory_rows(memories: Sequence[MemoryView], console: Console) -> None:
+    """Render provenance labels and text for memory records."""
+
     for memory in memories:
         line = Text("  ")
         line.append(memory.source, style="cyan")
@@ -210,6 +232,9 @@ def handle_command(
         except TripAgentError as error:
             console.print(f"[red]{error}[/red]")
         return True
+    if command == "/why":
+        show_why(state.last_retrieved_memories, console)
+        return True
     if command == "/help":
         show_help(console)
         return True
@@ -281,12 +306,14 @@ def run_repl(
         try:
             with console.status("[bold cyan]Planning your trip…[/bold cyan]", spinner="dots"):
                 reply = agent.reply(state.session_id, line)
+            state.last_retrieved_memories = reply.memories
             show_reply(reply, console)
             console.print(
                 "[dim]Saved to session memory. Redis evaluates salient details for "
                 "background promotion.[/dim]"
             )
         except AssistantMemoryWarning as warning:
+            state.last_retrieved_memories = warning.reply.memories
             show_reply(warning.reply, console)
             console.print(f"[yellow]{warning}[/yellow]")
         except TripAgentError as error:

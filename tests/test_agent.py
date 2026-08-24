@@ -11,6 +11,7 @@ from redis_agent_memory import AgentMemory, models
 
 from trip_agent.agent import (
     AssistantMemoryWarning,
+    MemoryView,
     ProfileFact,
     ProfileSaveResult,
     TripAgent,
@@ -171,6 +172,7 @@ def test_reply_stores_user_loads_context_calls_web_search_and_stores_assistant()
     assert openai.responses.kwargs["tools"] == [{"type": "web_search"}]
     assert str(openai.responses.kwargs["input"]).count("Where should I eat?") == 1
     assert reply.text == "Kyoto has lovely vegetarian options."
+    assert reply.memories == (MemoryView(memory_type="preference", text="Sam is vegetarian."),)
     assert memory.calls[-1].kwargs["role"] is models.MessageRole.ASSISTANT
 
 

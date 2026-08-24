@@ -78,6 +78,7 @@ normal message or one of these commands:
 | `/new` | Start a fresh session while retaining the traveler's long-term memories. |
 | `/memories` | Broadly search for known travel plans and preferences. |
 | `/memories food preferences` | Search memories using a custom query. |
+| `/why` | Show the long-term memories retrieved for the most recent answer. |
 | `/user Maya` | Switch to Maya with a new session and owner-scoped recall. |
 | `/onboard` | Save the active traveler's explicit profile preferences directly to long-term memory. |
 | `/help` | Show the command reference. |
@@ -107,6 +108,10 @@ normal message or one of these commands:
    ```
 
    Point out the OpenAI web-search citations in the answer.
+
+   Then run `/why` to show the exact direct and learned memories that were retrieved for the
+   answer. This is a retrieval receipt, not a claim that one memory mechanically caused every
+   part of the response.
 
 4. Add a preference naturally in chat:
 

@@ -18,20 +18,21 @@ from trip_agent.prompt import SYSTEM_PROMPT
 
 
 @dataclass(frozen=True, slots=True)
-class AgentReply:
-    """A generated answer and its web citations."""
-
-    text: str
-    citations: tuple[Citation, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class MemoryView:
     """A display-ready long-term memory."""
 
     memory_type: str
     text: str
     source: str = "learned"
+
+
+@dataclass(frozen=True, slots=True)
+class AgentReply:
+    """A generated answer, citations, and long-term memories retrieved for it."""
+
+    text: str
+    citations: tuple[Citation, ...]
+    memories: tuple[MemoryView, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +130,7 @@ class TripAgent:
                 reply = AgentReply(
                     text=_conflict_message(proposed_plan, conflicts[0]),
                     citations=(),
+                    memories=_memory_views(memories),
                 )
                 try:
                     self._add_event(
@@ -159,6 +161,7 @@ class TripAgent:
         reply = AgentReply(
             text=response.output_text,
             citations=extract_citations(response),
+            memories=_memory_views(memories),
         )
         try:
             self._add_event(
@@ -182,14 +185,7 @@ class TripAgent:
         except (errors.AgentMemoryError, httpx.RequestError) as error:
             raise TripAgentError("I couldn't search your Redis Agent Memory data.") from error
 
-        return tuple(
-            MemoryView(
-                memory_type=item.memory_type or "memory",
-                text=item.text,
-                source="direct" if getattr(item, "namespace", None) == "profile" else "learned",
-            )
-            for item in result.items
-        )
+        return _memory_views(result)
 
     def has_profile(self) -> bool:
         """Return whether this traveler has at least one direct onboarding record."""
@@ -397,6 +393,20 @@ def _profile_text(value: object) -> str:
     if not isinstance(value, str) or not (text := value.strip()):
         raise ValueError("A profile fact must be non-empty text.")
     return text
+
+
+def _memory_views(result: object) -> tuple[MemoryView, ...]:
+    """Convert a Redis memory-search result into display-ready provenance records."""
+
+    items = getattr(result, "items", ())
+    return tuple(
+        MemoryView(
+            memory_type=getattr(item, "memory_type", None) or "memory",
+            text=getattr(item, "text", ""),
+            source="direct" if getattr(item, "namespace", None) == "profile" else "learned",
+        )
+        for item in items
+    )
 
 
 def _trip_plan_from_memory(text: object) -> TripPlan | None:

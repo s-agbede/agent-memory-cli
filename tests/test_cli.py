@@ -94,6 +94,7 @@ def recording_console() -> tuple[Console, StringIO]:
 
 def test_new_command_replaces_session_but_keeps_user() -> None:
     state = SessionState(session_id="old", user_id="sam")
+    state.last_retrieved_memories = (MemoryView(memory_type="semantic", text="Vegetarian"),)
     console, output = recording_console()
 
     keep_running = handle_command("/new", state, cast(TripAgent, FakeAgent()), console)
@@ -101,6 +102,7 @@ def test_new_command_replaces_session_but_keeps_user() -> None:
     assert keep_running is True
     assert state.session_id != "old"
     assert state.user_id == "sam"
+    assert state.last_retrieved_memories is None
     assert "fresh session" in output.getvalue().lower()
     assert state.session_id in output.getvalue()
 
@@ -275,6 +277,22 @@ def test_show_memories_labels_direct_profile_records() -> None:
     )
 
     assert "direct" in output.getvalue().lower()
+
+
+def test_why_command_shows_memories_retrieved_for_the_last_answer() -> None:
+    state = SessionState(session_id="session", user_id="sam")
+    state.last_retrieved_memories = (
+        MemoryView(memory_type="semantic", text="The traveler is vegetarian.", source="direct"),
+        MemoryView(memory_type="preference", text="The traveler prefers rail travel."),
+    )
+    console, output = recording_console()
+
+    keep_running = handle_command("/why", state, cast(TripAgent, FakeAgent()), console)
+
+    assert keep_running is True
+    assert "retrieved for your last answer" in output.getvalue().lower()
+    assert "vegetarian" in output.getvalue().lower()
+    assert "rail travel" in output.getvalue().lower()
 
 
 def test_help_unknown_and_exit_commands() -> None:

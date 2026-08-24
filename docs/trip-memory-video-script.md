@@ -60,6 +60,8 @@ Point out the “Planning your trip…” indicator, then walk through the answe
 
 Say: “Memory personalizes the answer. Web search handles time-sensitive facts such as current opening hours, events, and transport information.”
 
+Run `/why` immediately after the answer. Say: “Rather than asking you to trust that memory was used, this shows the exact long-term records retrieved for this answer, including whether each one was an explicit profile fact or something learned from chat.”
+
 ## 3:20 — Let the agent learn naturally
 
 Add a preference in normal conversation:
@@ -136,7 +138,8 @@ Keep this compact and use the diagram to orient the viewer:
 2. `get_session_memory()` loads short-term context for the current session.
 3. `search_long_term_memory()` performs semantic retrieval with an `owner_id` filter.
 4. `bulk_create_long_term_memories()` writes the rewritten onboarding facts directly.
-5. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
+5. `/why` exposes the retrieved records from the latest answer as a transparent retrieval receipt.
+6. The normal chat path does not manually promote or deduplicate memories; Redis Agent Memory manages that asynchronously.
 
 Say: “The key design choice is not to save every line as durable memory. Direct writes are for explicit, trusted facts. Session events preserve the conversation. Background promotion decides what is worth carrying forward.”
 
