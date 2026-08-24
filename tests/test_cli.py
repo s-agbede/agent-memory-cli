@@ -23,7 +23,6 @@ from trip_agent.agent import (
     TripAgentError,
 )
 from trip_agent.cli import (
-    DEFAULT_MEMORY_QUERY,
     SessionState,
     app,
     handle_command,
@@ -58,6 +57,7 @@ class FakeAgent:
         self.warning = warning
         self.profile_exists = profile_exists
         self.memory_query: str | None = None
+        self.memory_browse_count = 0
         self.messages: list[tuple[str, str]] = []
         self.profile_facts: list[ProfileFact] = []
         self.profile_save_result = profile_save_result
@@ -91,6 +91,17 @@ class FakeAgent:
         self.memory_query = query
         assert limit == 10
         return (MemoryView(memory_type="preference", text="The traveler is vegetarian."),)
+
+    def browse_memories(self, limit: int = 100) -> tuple[MemoryView, ...]:
+        self.memory_browse_count += 1
+        assert limit == 100
+        return (
+            MemoryView(
+                memory_type="semantic",
+                text="The traveler is vegetarian.",
+                source="direct",
+            ),
+        )
 
     def save_profile(self, facts: tuple[ProfileFact, ...]) -> ProfileSaveResult:
         self.save_calls += 1
@@ -651,27 +662,54 @@ def test_user_profile_check_failure_keeps_the_selected_owner_and_allows_manual_o
     assert agent.save_calls == 1
 
 
-@pytest.mark.parametrize(
-    ("command", "expected_query"),
-    [
-        ("/memories", DEFAULT_MEMORY_QUERY),
-        ("/memories food preferences", "food preferences"),
-    ],
-)
-def test_memories_command_uses_owner_scoped_agent_search(
-    command: str,
-    expected_query: str,
-) -> None:
+def test_memories_command_browses_owner_memories_without_semantic_threshold() -> None:
     state = SessionState(session_id="session", user_id="sam")
     agent = FakeAgent()
     console, output = recording_console()
 
-    keep_running = handle_command(command, state, cast(TripAgent, agent), console)
+    keep_running = handle_command("/memories", state, cast(TripAgent, agent), console)
 
     assert keep_running is True
-    assert agent.memory_query == expected_query
+    assert agent.memory_browse_count == 1
+    assert agent.memory_query is None
+    assert "vegetarian" in output.getvalue()
+    assert "semantic fact" in output.getvalue()
+
+
+def test_memories_command_semantically_searches_when_query_is_supplied() -> None:
+    state = SessionState(session_id="session", user_id="sam")
+    agent = FakeAgent()
+    console, output = recording_console()
+
+    keep_running = handle_command(
+        "/memories food preferences", state, cast(TripAgent, agent), console
+    )
+
+    assert keep_running is True
+    assert agent.memory_browse_count == 0
+    assert agent.memory_query == "food preferences"
     assert "vegetarian" in output.getvalue()
     assert "preference" in output.getvalue()
+
+
+def test_empty_memory_browse_reports_that_no_memories_are_saved() -> None:
+    console, output = recording_console()
+
+    show_memories([], console)
+
+    text = output.getvalue().lower()
+    assert "no long-term memories are saved" in text
+    assert "automatic extraction" not in text
+
+
+def test_empty_semantic_memory_search_reports_no_relevant_matches() -> None:
+    console, output = recording_console()
+
+    show_memories([], console, query="food preferences")
+
+    text = output.getvalue().lower()
+    assert "no relevant memories matched" in text
+    assert "different or more specific" in text
 
 
 def test_show_memories_treats_rich_markup_as_plain_data() -> None:

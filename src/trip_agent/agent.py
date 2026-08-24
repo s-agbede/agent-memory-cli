@@ -207,6 +207,23 @@ class TripAgent:
 
         return _memory_views(result)
 
+    def browse_memories(self, limit: int = 100) -> tuple[MemoryView, ...]:
+        """Browse this traveler's long-term memories without semantic ranking."""
+
+        request = cast(
+            MemoryRequest,
+            {
+                "filter_": {"owner_id": {"eq": self.user_id}},
+                "limit": limit,
+            },
+        )
+        try:
+            result = self.memory.search_long_term_memory(request=request)
+        except MEMORY_EXCEPTIONS as error:
+            raise TripAgentError("I couldn't browse your Redis Agent Memory data.") from error
+
+        return _memory_views(result)
+
     def has_profile(self) -> bool:
         """Return whether this traveler has at least one direct onboarding record."""
 

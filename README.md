@@ -80,7 +80,7 @@ normal message or one of these commands:
 | Command | Behavior |
 | --- | --- |
 | `/new` | Start a fresh session while retaining the traveler's long-term memories. |
-| `/memories` | Semantically search the active owner's known travel plans and preferences. |
+| `/memories` | Browse the active owner's saved long-term memories without semantic filtering. |
 | `/memories food preferences` | Semantically search the active owner's memories using a custom query. |
 | `/why` | Show the long-term memories retrieved for the most recent answer. |
 | `/user Maya` | Normalize Maya as the active `owner_id`, start a fresh session, clear `/why`'s prior receipt, check Maya's direct profile, then welcome a returning owner or automatically begin onboarding for a new one. |
@@ -166,9 +166,11 @@ normal conversation and let Redis Agent Memory identify durable information in t
   type shown exactly as Redis returns it. Direct profile facts are semantic; dated trip plans are
   episodic. The app shows Redis-promoted kinds rather than guessing them.
 
-The normal reply path and `/memories` use owner-scoped semantic search with a relevance threshold,
-so they return relevant matches rather than every record. Direct-profile checks and dated-trip-plan
-checks are different: they use owner-scoped filters only, then the app applies the deterministic
+The normal reply path and `/memories <query>` use owner-scoped semantic search with a relevance
+threshold, so they return relevant matches rather than every record. Bare `/memories` uses an
+owner-scoped filter-only browse so direct onboarding facts are visible immediately even when a
+broad natural-language query would score below that threshold. Direct-profile checks and
+dated-trip-plan checks also use owner-scoped filters only, then the app applies the deterministic
 profile or date-overlap rule in code.
 
 Retrieved memory is reference context, not executable instruction. Keep authorization, security,

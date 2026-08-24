@@ -599,6 +599,37 @@ def test_search_memories_uses_owner_scoped_semantic_request() -> None:
     assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
 
 
+def test_browse_memories_uses_owner_scoped_filter_only_request() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    rows = agent.browse_memories(limit=100)
+
+    request = cast(dict[str, object], memory.calls[0].kwargs["request"])
+    assert request == {
+        "filter_": {"owner_id": {"eq": "sam"}},
+        "limit": 100,
+    }
+    assert "text" not in request
+    assert "similarity_threshold" not in request
+    assert [(row.memory_type, row.text) for row in rows] == [("preference", "Sam is vegetarian.")]
+
+
+def test_browse_memories_translates_no_response() -> None:
+    timeline: list[str] = []
+    memory = FakeMemory(timeline)
+
+    def raise_no_response(**kwargs: object) -> object:
+        raise errors.NoResponseError()
+
+    memory.search_long_term_memory = raise_no_response
+    agent = make_agent(memory, FakeOpenAI(timeline))
+
+    with pytest.raises(TripAgentError, match="browse your Redis Agent Memory data"):
+        agent.browse_memories()
+
+
 def test_search_memories_translates_no_response() -> None:
     timeline: list[str] = []
     memory = FakeMemory(timeline)

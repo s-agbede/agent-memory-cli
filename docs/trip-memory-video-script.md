@@ -59,7 +59,9 @@ rewrite or Redis profile write. At any question, `/cancel`, Ctrl+C, or EOF disca
 attempt before the rewrite or any Redis profile write. Repeating onboarding updates the answered
 categories instead of duplicating them.”
 
-Show `/memories`. Each row has independent provenance (`direct` or `learned`) and kind
+Show `/memories`. With no query, this browses Maya's owner-scoped memories without semantic
+filtering, so the direct profile is visible immediately. Each row has independent provenance
+(`direct` or `learned`) and kind
 (`semantic fact`, `episodic event`, `retained message`, or a service-defined custom type). Profile
 facts are direct semantic facts; dated plans are direct episodic events. Redis-provided kinds are
 shown as returned, never guessed. The direct profile solves the cold start.
@@ -110,8 +112,9 @@ Add: “Promotion is asynchronous, so leave a pause in the recording if needed.�
 
 Run `/memories` again, optionally narrowing it with `/memories transport preferences`.
 
-Say: “This is owner-scoped semantic search with a relevance threshold: relevant direct and learned
-matches, not a raw dump.”
+Say: “With no query, this is an owner-scoped browse. Add a query and it becomes semantic search
+with a relevance threshold, returning relevant direct and learned matches rather than every
+record.”
 
 Explain once: “A traveler name becomes an owner ID—`Maya Chen` becomes `maya-chen`. It scopes
 this demo’s server-side retrieval; it is not authentication, authorization, account creation, or

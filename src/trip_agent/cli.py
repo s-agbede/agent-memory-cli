@@ -25,7 +25,6 @@ from trip_agent.agent import (
 from trip_agent.config import Settings
 from trip_agent.formatting import render_reply
 
-DEFAULT_MEMORY_QUERY = "What travel preferences and plans are known about this traveler?"
 ONBOARDING_PROMPTS = (
     ("preferences", "What kinds of trips and places do you enjoy?"),
     ("dietary", "What food or dietary needs should I remember?"),
@@ -109,14 +108,21 @@ def show_help(console: Console) -> None:
     console.print("  [cyan]/exit[/cyan]                Leave the trip agent")
 
 
-def show_memories(memories: Sequence[MemoryView], console: Console) -> None:
+def show_memories(
+    memories: Sequence[MemoryView],
+    console: Console,
+    query: str | None = None,
+) -> None:
     """Render long-term memory search results."""
 
     if not memories:
-        console.print(
-            "[yellow]No matching memories yet. Automatic extraction is asynchronous, "
-            "so newly learned details can take a short time to appear.[/yellow]"
-        )
+        if query is None:
+            console.print("[yellow]No long-term memories are saved for this traveler yet.[/yellow]")
+        else:
+            console.print(
+                "[yellow]No relevant memories matched that search. Try a different or more "
+                "specific query. Recently learned chat details may still be processing.[/yellow]"
+            )
         return
 
     console.print("[bold magenta]Long-term memories[/bold magenta]")
@@ -306,9 +312,12 @@ def handle_command(
         show_session_started(state, console)
         return True
     if command == "/memories":
-        query = argument.strip() or DEFAULT_MEMORY_QUERY
+        query = argument.strip()
         try:
-            show_memories(agent.search_memories(query, limit=10), console)
+            if query:
+                show_memories(agent.search_memories(query, limit=10), console, query=query)
+            else:
+                show_memories(agent.browse_memories(limit=100), console)
         except TripAgentError as error:
             console.print(f"[red]{error}[/red]")
         return True
