@@ -109,11 +109,13 @@ normal message or one of these commands:
    fact-preserving profile statements. Category-specific wording keeps the last answer as a
    usual departure city (for example, `The traveler's usual departure city is Glasgow.`), not an
    unsupported claim about where the traveler lives.
-   Those explicit facts are then written directly to owner-scoped long-term memory, so
-   `/memories` can show them immediately. This avoids a cold start. Enter `/cancel` at any
-   question—or use Ctrl+C or EOF—to discard the entire attempt: there is no OpenAI rewrite and
-   no Redis profile write. Running onboarding again updates the answered categories rather than
-   duplicating them.
+   Those explicit facts are then written directly to owner-scoped long-term memory. Before the CLI
+   counts a category as created or updated, it reads that exact Redis record back and verifies its
+   text and profile metadata. Any category that cannot be confirmed is reported as failed and can
+   be retried with `/onboard`; confirmed facts are immediately available to `/memories`. This
+   avoids a cold start. Enter `/cancel` at any question—or use Ctrl+C or EOF—to discard the entire
+   attempt: there is no OpenAI rewrite and no Redis profile write. Running onboarding again updates
+   the answered categories rather than duplicating them.
 
 3. Ask for a current recommendation:
 

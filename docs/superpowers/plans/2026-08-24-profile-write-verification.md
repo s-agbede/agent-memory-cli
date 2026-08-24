@@ -25,7 +25,7 @@
 - Modify: `src/trip_agent/agent.py:292-362`
 - Modify: `src/trip_agent/agent.py:500-535`
 
-- [ ] **Step 1: Make the Redis fake model readable profile state**
+- [x] **Step 1: Make the Redis fake model readable profile state**
 
 Add `missing_profile_read_ids` and `profile_read_overrides` inputs. Retain successful profile
 creates and updates in an ID-keyed dictionary, then expose them through an exact-read fake:
@@ -45,7 +45,7 @@ def get_long_term_memory(self, **kwargs: object) -> object:
 Successful fake creates store `SimpleNamespace(**record)`. Successful fake updates replace the
 same ID with a namespace containing the submitted fields and ID.
 
-- [ ] **Step 2: Write failing create-verification tests**
+- [x] **Step 2: Write failing create-verification tests**
 
 Add tests proving that an acknowledged but unreadable category fails while another matching
 category succeeds, and that a readable record with mismatched content fails:
@@ -69,13 +69,13 @@ def test_save_profile_verifies_acknowledged_creates_and_continues_after_missing_
 The mismatch test supplies a `profile_read_overrides` record whose text differs from the submitted
 fact and expects that category in `failed_categories`.
 
-- [ ] **Step 3: Write a failing update-verification test**
+- [x] **Step 3: Write a failing update-verification test**
 
 Use an existing legacy ID, let `update_long_term_memory()` succeed, make its exact read unreadable,
 and assert that the category is failed rather than updated. Also assert that verification used the
 legacy ID.
 
-- [ ] **Step 4: Run the focused tests and confirm RED**
+- [x] **Step 4: Run the focused tests and confirm RED**
 
 Run:
 
@@ -89,7 +89,7 @@ uv run pytest -q \
 Expected: failures because `save_profile()` does not call `get_long_term_memory()` and still trusts
 write acknowledgements.
 
-- [ ] **Step 5: Add the exact profile-record validator**
+- [x] **Step 5: Add the exact profile-record validator**
 
 Add a private `TripAgent` method:
 
@@ -126,20 +126,20 @@ def _matches_profile_fact(
     )
 ```
 
-- [ ] **Step 6: Gate create and update success on verification**
+- [x] **Step 6: Gate create and update success on verification**
 
 After a successful update, append to `updated_categories` only when
 `_profile_write_is_readable(existing_id, fact)` returns true; otherwise append to
 `failed_categories`. After bulk create, keep the existing acknowledgement/error checks and verify
 each eligible `(fact, record)` pair before appending to `created_categories`.
 
-- [ ] **Step 7: Run focused tests and confirm GREEN**
+- [x] **Step 7: Run focused tests and confirm GREEN**
 
 Run the Step 4 command again.
 
 Expected: all three tests pass.
 
-- [ ] **Step 8: Run all agent tests**
+- [x] **Step 8: Run all agent tests**
 
 Run:
 
@@ -150,7 +150,7 @@ uv run pytest -q tests/test_agent.py
 Expected: all agent tests pass after updating existing timeline assertions to include the new exact
 reads.
 
-- [ ] **Step 9: Commit the behavior**
+- [x] **Step 9: Commit the behavior**
 
 ```bash
 git add src/trip_agent/agent.py tests/test_agent.py
@@ -163,13 +163,13 @@ git commit -m "fix: verify profile writes before reporting success"
 - Modify: `README.md:107-116`
 - Modify: `docs/trip-memory-video-script.md:50-68`
 
-- [ ] **Step 1: Document verified direct writes**
+- [x] **Step 1: Document verified direct writes**
 
 State that onboarding uses exact-ID read-after-write checks and only confirmed records appear in
 the saved count. Explain that failed verification is reported by category and can be retried with
 `/onboard`.
 
-- [ ] **Step 2: Run all verification commands**
+- [x] **Step 2: Run all verification commands**
 
 Run each command separately:
 
@@ -184,7 +184,7 @@ git diff --check
 Expected: the unit suite passes with only the opt-in live integration test skipped; formatting,
 linting, typing, and whitespace checks exit successfully.
 
-- [ ] **Step 3: Run the existing read-only live integration check**
+- [x] **Step 3: Run the existing read-only live integration check**
 
 Run:
 
@@ -195,7 +195,7 @@ RUN_REDIS_INTEGRATION=1 uv run pytest -q tests/test_integration.py
 Expected: pass without creating sessions or memories. Do not perform a live onboarding write as
 part of automated verification.
 
-- [ ] **Step 4: Commit documentation and plan progress**
+- [x] **Step 4: Commit documentation and plan progress**
 
 ```bash
 git add README.md docs/trip-memory-video-script.md \

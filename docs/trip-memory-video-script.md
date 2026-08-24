@@ -52,12 +52,17 @@ You: London
 ```
 
 Say: “A short LLM pass turns these explicit answers into concise, fact-preserving statements,
-then writes them directly to long-term memory.”
+then writes them directly to long-term memory. The app reads each exact Redis ID back before it
+counts that category as saved, so the confirmation reflects readable state rather than only a
+write acknowledgement.”
 
 Add: “A blank answer is skipped. If all four answers are blank, onboarding ends without an OpenAI
 rewrite or Redis profile write. At any question, `/cancel`, Ctrl+C, or EOF discards the whole
 attempt before the rewrite or any Redis profile write. Repeating onboarding updates the answered
 categories instead of duplicating them.”
+
+If verification fails for a category, point out that the CLI reports it as failed while preserving
+the categories it confirmed. Running `/onboard` again can retry only the missing answers.
 
 Show `/memories`. With no query, this browses Maya's owner-scoped memories without semantic
 filtering, so the direct profile is visible immediately. Each row has independent provenance
