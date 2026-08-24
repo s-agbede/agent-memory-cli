@@ -154,7 +154,7 @@ def run_onboarding(
     reader = read_input or _read_input
     facts: list[ProfileFact] = []
     for category, question in ONBOARDING_PROMPTS:
-        console.print(question)
+        console.print("[bold green]Trip agent[/bold green]: ", question, sep="")
         answer = reader().strip()
         if answer:
             facts.append(ProfileFact(category=category, text=answer))

@@ -124,6 +124,7 @@ def test_onboarding_saves_non_empty_profile_answers_directly() -> None:
     ]
     assert "long-term profile" in output.getvalue().lower()
     assert "/memories" in output.getvalue()
+    assert "Trip agent: What city do you usually travel from?" in output.getvalue()
     assert [fact.text for fact in agent.profile_facts] == [
         "Rewritten: food and museums",
         "Rewritten: vegetarian",

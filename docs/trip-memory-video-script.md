@@ -33,16 +33,16 @@ Fresh session started.
 Session ID: 8b7d3d9e-1a9c-4a92-a1ef-0a4b0710cb42
 
 Quick travel profile
-What kinds of trips and places do you enjoy?
+Trip agent: What kinds of trips and places do you enjoy?
 > food, museums, local neighborhoods, and easy hikes
 
-What food or dietary needs should I remember?
+Trip agent: What food or dietary needs should I remember?
 > vegetarian
 
-What budget works for you?
+Trip agent: What budget works for you?
 > moderate, but I’ll splurge on one great experience
 
-What city do you usually travel from?
+Trip agent: What city do you usually travel from?
 > London
 ```
 
