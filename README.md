@@ -1,10 +1,29 @@
 # Trip Agent CLI
 
+[![CI](https://github.com/s-agbede/agent-memory-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/s-agbede/agent-memory-cli/actions/workflows/ci.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Checked with mypy](https://img.shields.io/badge/mypy-strict-2a6db2.svg)](https://mypy-lang.org/)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
 A small, friendly trip recommendation agent that demonstrates the
 [Redis Agent Memory Python SDK](https://redis.io/docs/latest/develop/ai/context-engine/agent-memory/python-sdk-quickstart/)
 directly from an interactive CLI. Redis Agent Memory supplies session and long-term context;
 the OpenAI Responses API generates the answer and can use its built-in web search for current
 recommendations.
+
+## Quickstart
+
+Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), an OpenAI API key, and a Redis Cloud
+Agent Memory service. See [Prerequisites](#prerequisites) for how to provision the last one.
+
+```bash
+git clone https://github.com/s-agbede/agent-memory-cli.git
+cd agent-memory-cli
+uv sync --all-groups --locked
+cp .env.example .env      # fill in your OpenAI and Agent Memory credentials
+uv run trip-agent
+```
 
 ## What the demo shows
 
@@ -237,6 +256,29 @@ without calling OpenAI:
 ```bash
 RUN_REDIS_INTEGRATION=1 uv run pytest tests/test_integration.py -v
 ```
+
+## Project structure
+
+```text
+src/trip_agent/
+  cli.py          Typer CLI, the interactive loop, and slash commands
+  agent.py        Redis Agent Memory + OpenAI Responses calls
+  config.py       Pydantic Settings loaded from .env
+  prompt.py       System instructions and context assembly
+  formatting.py   Rich rendering, including citation links
+tests/            Unit tests (stubbed) plus an opt-in Redis integration test
+docs/             Design specs and implementation plans
+```
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+project conventions, and [SECURITY.md](SECURITY.md) for how to report a vulnerability and how
+credentials are handled.
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ## References
 

@@ -1,13 +1,31 @@
-.worktrees/
+# Secrets — never commit these
 .env
-.venv/
+.env.*
+!.env.example
+
+# Python
 __pycache__/
 *.py[cod]
-.coverage
-htmlcov/
+.venv/
 dist/
 build/
 *.egg-info/
+
+# Tooling caches
+.coverage
+coverage.xml
+htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local agent tooling and scratch worktrees
+.worktrees/
+.superpowers/
+.claude/
