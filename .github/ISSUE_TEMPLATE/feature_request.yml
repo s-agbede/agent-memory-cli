@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a change to the demo.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is deliberately small. Proposals that keep it readable and closely tied to
+        real Redis Agent Memory SDK usage are the most likely to land.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the gap you hit, not just the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

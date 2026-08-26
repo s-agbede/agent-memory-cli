@@ -1,0 +1,62 @@
+name: Bug report
+description: Something in the CLI does not behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please redact your Agent Memory endpoint, store ID, and API keys from anything you paste.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The exact command you ran and the input you typed.
+      placeholder: |
+        1. uv run trip-agent
+        2. Entered traveler name "Maya Chen"
+        3. Typed /memories
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or traceback
+      description: Paste the relevant terminal output, with credentials removed.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Your OS, plus `python --version` and `uv --version`.
+      placeholder: macOS 15.6, Python 3.12.4, uv 0.5.11
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I ran `uv sync --all-groups --locked` and the failure still occurs.
+          required: true
+        - label: I have removed all credentials from this report.
+          required: true
