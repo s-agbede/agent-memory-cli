@@ -108,79 +108,16 @@ normal message or one of these commands:
 | `/help` | Show the command reference. |
 | `/exit` | Close the client and leave the agent. |
 
-## Suggested video flow
-
-1. At startup, enter a traveler name such as `Maya Chen`. The CLI displays a new session UUID,
-   checks for a direct profile, and automatically starts onboarding when none exists. A returning
-   owner is greeted warmly and skips these questions.
-
-2. With no confirmation step, answer the four durable profile questions:
-
-   ```text
-   What kinds of trips and places do you enjoy?
-   What food or dietary needs should I remember?
-   What budget works for you?
-   What city do you usually travel from?
-   ```
-
-   Blank answers are skipped. If every answer is blank, onboarding ends without an OpenAI rewrite
-   or Redis profile write. Otherwise, a short LLM pass turns the remaining answers into concise,
-   fact-preserving profile statements. Category-specific wording keeps the last answer as a
-   usual departure city (for example, `The traveler's usual departure city is Glasgow.`), not an
-   unsupported claim about where the traveler lives.
-   Those explicit facts are then written directly to owner-scoped long-term memory. Before the CLI
-   counts a category as created or updated, it reads that exact Redis record back and verifies its
-   text and profile metadata. Any category that cannot be confirmed is reported as failed and can
-   be retried with `/onboard`; confirmed facts are immediately available to `/memories`. This
-   avoids a cold start. Enter `/cancel` at any question—or use Ctrl+C or EOF—to discard the entire
-   attempt: there is no OpenAI rewrite and no Redis profile write. Running onboarding again updates
-   the answered categories rather than duplicating them.
-
-3. Ask for a current recommendation:
-
-   ```text
-   Where should I eat in Kyoto, and which places are currently open on Sundays?
-   ```
-
-   Point out the OpenAI web-search citations in the answer.
-
-   Then run `/why` to show the exact direct and learned memories that were retrieved for the
-   answer. This is a retrieval receipt, not a claim that one memory mechanically caused every
-   part of the response.
-
-4. Add a preference naturally in chat:
-
-   ```text
-   For shorter trips, I prefer trains when the journey is practical. Please remember that.
-   ```
-
-   This turn is saved as session memory. Redis Agent Memory extracts, deduplicates, and promotes
-   salient facts in the background; it is eventually consistent, so do not expect the new memory
-   to appear immediately.
-
-5. After a brief pause, run:
-
-   ```text
-   /memories
-   ```
-
-6. Exit the application and run `uv run trip-agent` again. Enter the same traveler name, point
-   out the different session UUID, then ask a question that depends on durable preferences:
-
-   ```text
-   Can you suggest a different city break that fits what you know about me?
-   ```
-
-New long-term memories may not appear immediately because extraction runs asynchronously.
-Session summarization is also handled by Redis Agent Memory in the background. `/new` remains a
-quick way to create another session in one process; restarting is the clearest video proof that
-only server-side long-term memory persisted.
-
 ## Direct writes and automatic learning
 
 Use direct long-term-memory writes for explicit, trusted facts you already have, such as an
 onboarding profile, imported preferences, or business reference data. Use session events for
 normal conversation and let Redis Agent Memory identify durable information in the background.
+
+Extraction and session summarization are asynchronous and eventually consistent, so a fact
+mentioned in chat will not appear in `/memories` immediately. Direct profile writes are the
+exception: `/onboard` reads each record back and verifies it, so confirmed facts are queryable
+right away.
 
 `/memories` and `/why` display two independent dimensions for every returned record:
 
@@ -207,8 +144,16 @@ retrieval to enforce them.
 
 ## Optional `trip_preference` memory type
 
-The app works with Redis Agent Memory's built-in extraction. For a more visual demo, configure
-the optional custom memory type from Redis's travel-planning quickstart:
+The app works with Redis Agent Memory's built-in extraction. It also handles custom memory types
+without code changes: retrieval filters on `owner_id` only, so custom-typed records are returned
+by `/memories` and `/why` and labelled with the type name exactly as Redis reports it.
+
+One limit is worth knowing before you configure one. The app renders each record's `text` field.
+It does not read `MemoryRecord.attributes`, where Redis puts a custom type's structured fields, so
+those values are retrieved but not displayed. A custom type is therefore visible as a labelled
+record rather than as a structured card.
+
+To try it, configure the optional custom memory type from Redis's travel-planning quickstart:
 
 - Name: `trip_preference`
 - Description: `Structured requirements for a planned trip`
