@@ -6,239 +6,105 @@
 [![Checked with mypy](https://img.shields.io/badge/mypy-strict-2a6db2.svg)](https://mypy-lang.org/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-A small, friendly trip recommendation agent that demonstrates the
-[Redis Agent Memory Python SDK](https://redis.io/docs/latest/develop/ai/context-engine/agent-memory/python-sdk-quickstart/)
-directly from an interactive CLI. Redis Agent Memory supplies session and long-term context;
-the OpenAI Responses API generates the answer and can use its built-in web search for current
-recommendations.
+A trip recommendation agent that remembers you between runs — five small Python modules, no
+infrastructure of its own.
+
+It is a working demo of the
+[Redis Agent Memory Python SDK](https://redis.io/docs/latest/develop/ai/context-engine/agent-memory/python-sdk-quickstart/):
+Redis supplies session and long-term memory, and the OpenAI Responses API writes the answer using
+its built-in web search. No adapter, no MCP layer, no custom search client, no local Docker stack.
 
 ## Quickstart
 
-Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), an OpenAI API key, and a Redis Cloud
-Agent Memory service. See [Prerequisites](#prerequisites) for how to provision the last one.
+You need Python 3.12+, [`uv`](https://docs.astral.sh/uv/), an OpenAI API key, and a Redis Cloud
+Agent Memory service.
+
+Create the Agent Memory service with the
+[Redis Cloud setup guide](https://redis.io/docs/latest/operate/rc/context-engine/agent-memory/create-service/).
+From its Configuration tab, copy the HTTPS endpoint and Store ID, and save the API key when it is
+shown — Redis displays it only once.
 
 ```bash
 git clone https://github.com/s-agbede/agent-memory-cli.git
 cd agent-memory-cli
 uv sync --all-groups --locked
-cp .env.example .env      # fill in your OpenAI and Agent Memory credentials
-uv run trip-agent
-```
-
-## What the demo shows
-
-- Direct profile onboarding briefly rewrites explicit preferences into clear facts, then writes them to long-term memory immediately.
-- Each normal user and assistant turn is stored as a Redis Agent Memory session event.
-- Session history and an optional Redis-generated summary reconstruct the current conversation.
-- Every reply loads the owner's direct profile as baseline context, then adds relevant semantic
-  and episodic recall from long-term memory.
-- Dated future trip plans are checked against saved plans before an overlapping itinerary is generated.
-- OpenAI's built-in `web_search` tool finds current travel information.
-- Web citations appear as inline terminal links and in a clickable source list.
-- `/memories` and `/why` make direct and automatically learned Redis memories visible during the demo.
-
-The implementation directly uses the Redis Agent Memory SDK—calling
-`AgentMemory.add_session_event()`, `get_session_memory()`, and `search_long_term_memory()`—with
-Redis Cloud Agent Memory. It adds no adapter, MCP integration, custom search client, or local
-Docker stack. The OpenAI Responses API uses its built-in `web_search` tool for current information.
-
-## Prerequisites
-
-- Python 3.12 or newer
-- [`uv`](https://docs.astral.sh/uv/)
-- An OpenAI API key
-- A Redis Cloud database with an Agent Memory service
-
-Create the Agent Memory service by following the
-[Redis Cloud setup guide](https://redis.io/docs/latest/operate/rc/context-engine/agent-memory/create-service/).
-From its Configuration tab, copy the HTTPS endpoint and Store ID. Save the Agent Memory API key
-when Redis displays it; the key is shown only once.
-
-## Install and configure
-
-Install the locked dependencies:
-
-```bash
-uv sync --all-groups --locked
-```
-
-Copy the example configuration:
-
-```bash
 cp .env.example .env
 ```
 
-Set these values in `.env`:
+Fill in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=replace-with-your-openai-api-key
-OPENAI_MODEL=gpt-5.5
 REDIS_AGENT_MEMORY_ENDPOINT=https://replace-with-your-agent-memory-endpoint
 REDIS_AGENT_MEMORY_STORE_ID=replace-with-your-store-id
 REDIS_AGENT_MEMORY_API_KEY=replace-with-your-agent-memory-api-key
-TRIP_AGENT_USER_ID=traveler
 ```
 
-`OPENAI_MODEL` and `TRIP_AGENT_USER_ID` are optional. The default model is `gpt-5.5`; the default
-traveler ID supplies the startup prompt's default value. The entered
-traveler name is normalized into an Agent Memory `owner_id` (for example, `Maya Chen` becomes
-`maya-chen`). It is a demo scoping key, not authentication, authorization, account creation, or
-a secure identity. Enter the same traveler name after restarting when you want its long-term
-memory to carry across runs.
-
-Do not commit `.env`. It is already ignored by Git.
-
-## Run the agent
+`OPENAI_MODEL` (default `gpt-5.5`) and `TRIP_AGENT_USER_ID` (default `traveler`) are optional.
+`.env` is gitignored; keep it that way.
 
 ```bash
 uv run trip-agent
 ```
 
-The CLI checks the Redis Agent Memory service before opening the chat. Once connected, type a
-normal message or one of these commands:
+The CLI checks the Redis service, then asks for a traveler name. A new traveler gets four profile
+questions; a returning one is greeted and skips them. Enter the same traveler name on a later run
+to pick up that traveler's long-term memory.
+
+## What it does
+
+- **Onboards you directly.** Four profile questions are rewritten into concise facts and written
+  straight to long-term memory, then read back and verified — so there is no cold start.
+- **Remembers across restarts.** Each turn is stored as a session event; Redis promotes durable
+  facts from the conversation in the background.
+- **Grounds every reply in your profile,** then adds relevant semantic and episodic recall on top.
+- **Searches the web** through the Responses API's built-in `web_search`, with citations as
+  clickable terminal links.
+- **Shows its work.** `/memories` and `/why` make the retrieved Redis records visible, labelled by
+  where they came from and what kind they are.
+
+## Commands
 
 | Command | Behavior |
 | --- | --- |
-| `/new` | Start a fresh session while retaining the traveler's long-term memories. |
-| `/memories` | Browse the active owner's saved long-term memories without semantic filtering. |
-| `/memories food preferences` | Semantically search the active owner's memories using a custom query. |
-| `/why` | Show the long-term memories retrieved for the most recent answer. |
-| `/user Maya` | Normalize Maya as the active `owner_id`, start a fresh session, clear `/why`'s prior receipt, check Maya's direct profile, then welcome a returning owner or automatically begin onboarding for a new one. |
-| `/onboard` | Update the active traveler's explicit profile preferences directly in long-term memory. |
+| `/memories` | Browse this traveler's saved long-term memories, unranked. |
+| `/memories food preferences` | Semantically search this traveler's memories. |
+| `/why` | Show the memories retrieved for the most recent answer. |
+| `/onboard` | Update the profile preferences held in long-term memory. |
+| `/user Maya` | Switch active traveler, start a fresh session, and welcome or onboard them. |
+| `/new` | Start a fresh session, keeping long-term memories. |
 | `/help` | Show the command reference. |
-| `/exit` | Close the client and leave the agent. |
+| `/exit` | Leave the agent. |
 
-## Suggested video flow
+## How memory works
 
-1. At startup, enter a traveler name such as `Maya Chen`. The CLI displays a new session UUID,
-   checks for a direct profile, and automatically starts onboarding when none exists. A returning
-   owner is greeted warmly and skips these questions.
+Two things write to memory. The app writes **direct** facts it already trusts, like your
+onboarding profile. Redis promotes **learned** facts out of session history on its own.
 
-2. With no confirmation step, answer the four durable profile questions:
+That distinction is the one thing to know while using the demo, because it governs timing.
+Extraction is asynchronous and eventually consistent, so a preference you mention in chat will
+not show up in `/memories` right away. Verified direct profile writes are queryable immediately.
 
-   ```text
-   What kinds of trips and places do you enjoy?
-   What food or dietary needs should I remember?
-   What budget works for you?
-   What city do you usually travel from?
-   ```
+Every record shown by `/memories` and `/why` carries both labels: provenance (`direct` or
+`learned`) and kind (`semantic fact`, `episodic event`, `retained message`, or a custom type).
 
-   Blank answers are skipped. If every answer is blank, onboarding ends without an OpenAI rewrite
-   or Redis profile write. Otherwise, a short LLM pass turns the remaining answers into concise,
-   fact-preserving profile statements. Category-specific wording keeps the last answer as a
-   usual departure city (for example, `The traveler's usual departure city is Glasgow.`), not an
-   unsupported claim about where the traveler lives.
-   Those explicit facts are then written directly to owner-scoped long-term memory. Before the CLI
-   counts a category as created or updated, it reads that exact Redis record back and verifies its
-   text and profile metadata. Any category that cannot be confirmed is reported as failed and can
-   be retried with `/onboard`; confirmed facts are immediately available to `/memories`. This
-   avoids a cold start. Enter `/cancel` at any question—or use Ctrl+C or EOF—to discard the entire
-   attempt: there is no OpenAI rewrite and no Redis profile write. Running onboarding again updates
-   the answered categories rather than duplicating them.
-
-3. Ask for a current recommendation:
-
-   ```text
-   Where should I eat in Kyoto, and which places are currently open on Sundays?
-   ```
-
-   Point out the OpenAI web-search citations in the answer.
-
-   Then run `/why` to show the exact direct and learned memories that were retrieved for the
-   answer. This is a retrieval receipt, not a claim that one memory mechanically caused every
-   part of the response.
-
-4. Add a preference naturally in chat:
-
-   ```text
-   For shorter trips, I prefer trains when the journey is practical. Please remember that.
-   ```
-
-   This turn is saved as session memory. Redis Agent Memory extracts, deduplicates, and promotes
-   salient facts in the background; it is eventually consistent, so do not expect the new memory
-   to appear immediately.
-
-5. After a brief pause, run:
-
-   ```text
-   /memories
-   ```
-
-6. Exit the application and run `uv run trip-agent` again. Enter the same traveler name, point
-   out the different session UUID, then ask a question that depends on durable preferences:
-
-   ```text
-   Can you suggest a different city break that fits what you know about me?
-   ```
-
-New long-term memories may not appear immediately because extraction runs asynchronously.
-Session summarization is also handled by Redis Agent Memory in the background. `/new` remains a
-quick way to create another session in one process; restarting is the clearest video proof that
-only server-side long-term memory persisted.
-
-## Direct writes and automatic learning
-
-Use direct long-term-memory writes for explicit, trusted facts you already have, such as an
-onboarding profile, imported preferences, or business reference data. Use session events for
-normal conversation and let Redis Agent Memory identify durable information in the background.
-
-`/memories` and `/why` display two independent dimensions for every returned record:
-
-- **Provenance:** `direct` for records deliberately written by the app, or `learned` for records
-  Redis promoted from session history.
-- **Kind:** `semantic fact`, `episodic event`, `retained message`, or a service-defined custom
-  type shown exactly as Redis returns it. Direct profile facts are semantic; dated trip plans are
-  episodic. The app shows Redis-promoted kinds rather than guessing them.
-
-The normal reply path first uses an owner-and-namespace filter-only request to load the direct
-profile, then performs owner-scoped semantic search with a relevance threshold for learned and
-episodic context. The two results are merged with the profile first and duplicate Redis record IDs
-removed. This makes facts such as the usual departure city available even when the current message
-is not semantically similar to the profile wording. `/why` shows this merged context.
-
-`/memories <query>` uses only the relevance-thresholded semantic search. Bare `/memories` uses an
-owner-scoped filter-only browse so all direct onboarding facts are visible immediately. Direct
-profile checks and dated-trip-plan checks also use owner-scoped filters only, then the app applies
-the deterministic profile or date-overlap rule in code.
-
-Retrieved memory is reference context, not executable instruction. Keep authorization, security,
-and hard safety rules in application code and system instructions rather than relying on memory
-retrieval to enforce them.
-
-## Optional `trip_preference` memory type
-
-The app works with Redis Agent Memory's built-in extraction. For a more visual demo, configure
-the optional custom memory type from Redis's travel-planning quickstart:
-
-- Name: `trip_preference`
-- Description: `Structured requirements for a planned trip`
-- Destinations: `list[str]`
-- Travel period: `str`
-- Dietary requirements: `list[str]`
-- Food preferences: `list[str]`
-
-A suitable extraction instruction is:
-
-```text
-Extract trip requirements only when the user states a destination or travel plan.
-Preserve explicit dietary requirements and food preferences.
-```
-
-Custom types are configured on the Redis Agent Memory service, not in this application.
+For retrieval paths, merge order, and why the profile is loaded with a filter-only request rather
+than semantic search, see **[docs/memory-design.md](docs/memory-design.md)**. Custom memory types
+are covered in **[docs/custom-types.md](docs/custom-types.md)**.
 
 ## Privacy and safety
 
-Configure Redis Agent Memory's sensitive-data exclusions for passwords, access tokens, recovery
-codes, payment-card information, and booking confirmation codes. Semantic exclusions guide the
-extraction model but are advisory rather than a guarantee. Session content still reaches the
-configured model provider.
+The traveler name is normalized into an Agent Memory `owner_id` (`Maya Chen` becomes `maya-chen`).
+It is a demo scoping key — not authentication, authorization, or a secure identity.
 
-Do not enter real secrets, payment details, recovery codes, or booking confirmation codes in
-this demo.
+Retrieved memory is reference context, not executable instruction. Keep authorization and hard
+safety rules in application code, not in retrieval.
 
-## Development checks
+Session content reaches the configured model provider. Redis's sensitive-data exclusions guide
+the extraction model but are advisory, not a guarantee. **Do not enter real secrets, payment
+details, recovery codes, or booking confirmation codes.** See [SECURITY.md](SECURITY.md).
 
-Run the unit suite and quality checks:
+## Development
 
 ```bash
 uv run pytest
@@ -247,17 +113,12 @@ uv run ruff check .
 uv run mypy src
 ```
 
-The normal suite never calls Redis or OpenAI. The application startup check and the opt-in
-integration test each call `health()` plus read-only `list_sessions(limit=1, include_all=True)`.
-The SDK requires this explicit all-sessions scope when no owner filter is supplied. These checks
-create no events or memories and do not trigger promotion test data. To run that real Redis check
-without calling OpenAI:
+CI runs exactly these four. The default suite never calls Redis or OpenAI. To exercise the real
+read-only Redis health check:
 
 ```bash
 RUN_REDIS_INTEGRATION=1 uv run pytest tests/test_integration.py -v
 ```
-
-## Project structure
 
 ```text
 src/trip_agent/
@@ -266,19 +127,9 @@ src/trip_agent/
   config.py       Pydantic Settings loaded from .env
   prompt.py       System instructions and context assembly
   formatting.py   Rich rendering, including citation links
-tests/            Unit tests (stubbed) plus an opt-in Redis integration test
-docs/             Design specs and implementation plans
 ```
 
-## Contributing
-
-Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
-project conventions, and [SECURITY.md](SECURITY.md) for how to report a vulnerability and how
-credentials are handled.
-
-## License
-
-Released under the [MIT License](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute. Released under the [MIT License](LICENSE).
 
 ## References
 
